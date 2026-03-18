@@ -2,8 +2,7 @@ name: 每日股票调研报告
 
 on:
   schedule:
-    # 北京时间 19:00 = UTC 11:00
-    - cron: '0 11 * * 1-5'   # 周一至周五
+    - cron: '0 11 * * 1-5'   # 北京时间 19:00（UTC+8），周一至周五
   workflow_dispatch:           # 允许手动触发
 
 jobs:
@@ -11,11 +10,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: 配置 Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
@@ -24,15 +21,12 @@ jobs:
 
       - name: 运行并发送报告
         env:
-          SMTP_SERVER:   ${{ secrets.SMTP_SERVER }}
-          SMTP_PORT:     ${{ secrets.SMTP_PORT }}
-          SMTP_SSL:      ${{ secrets.SMTP_SSL }}
-          EMAIL_SENDER:  ${{ secrets.EMAIL_SENDER }}
-          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_SENDER:    ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD:  ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
         run: python run.py
 
-      - name: 上传 Excel 报告（可选存档）
+      - name: 存档 Excel（Actions 页面可下载）
         uses: actions/upload-artifact@v4
         with:
           name: 股票调研报告
