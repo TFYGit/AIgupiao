@@ -287,7 +287,7 @@ def get_block_trades(days: int = 7) -> pd.DataFrame:
         df["主题标签"] = ""
 
     keep = ["股票代码", "股票名称", "交易日期", "收盘价", "成交价", "折溢率%",
-            "成交额(元)", "买方营业部", "锁仓信号", "信号解读", "主题标签"]
+            "成交额(元)", "买方营业部", "卖方营业部", "锁仓信号", "信号解读", "主题标签"]
     keep = [c for c in keep if c in df.columns]
     df   = df[keep].sort_values("成交额(元)", ascending=False) if "成交额(元)" in df.columns else df
 
