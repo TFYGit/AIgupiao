@@ -1,0 +1,34 @@
+name: 每日股票调研报告
+
+on:
+  schedule:
+    - cron: '0 11 * * 1-5'   # 北京时间 19:00（UTC+8），周一至周五
+  workflow_dispatch:           # 允许手动触发
+
+jobs:
+  generate-and-send:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 运行并发送报告
+        env:
+          EMAIL_SENDER:    ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD:  ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
+        run: python run.py
+
+      - name: 存档 Excel（Actions 页面可下载）
+        uses: actions/upload-artifact@v4
+        with:
+          name: 股票调研报告
+          path: output/*.xlsx
+          retention-days: 30
