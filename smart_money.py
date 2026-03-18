@@ -234,21 +234,27 @@ def get_block_trades(days: int = 7) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # 筛选条件：折溢率 >= 0（平价/溢价）OR 买方/卖方 = 机构专用
-    mask_premium  = df["折溢率"] >= 0 if "折溢率" in df.columns else pd.Series(False, index=df.index)
-    mask_inst     = pd.Series(False, index=df.index)
-    for col in ["买方营业部", "卖方营业部"]:
-        if col in df.columns:
-            mask_inst |= df[col].str.contains("机构专用", na=False)
+    # 机构席位判断
+    mask_buy_inst  = df["买方营业部"].str.contains("机构专用", na=False) if "买方营业部" in df.columns else pd.Series(False, index=df.index)
+    mask_sell_inst = df["卖方营业部"].str.contains("机构专用", na=False) if "卖方营业部" in df.columns else pd.Series(False, index=df.index)
 
-    df = df[mask_premium | mask_inst].copy()
+    # 锁仓信号：综合折溢率 + 买卖方席位
+    def _signal(row):
+        rate     = row.get("折溢率", 0) or 0
+        buy_inst = bool(row.get("_buy_inst", False))
+        sel_inst = bool(row.get("_sel_inst", False))
+        if buy_inst and rate > 0:  return "机构溢价锁仓 🔒"
+        if buy_inst and rate == 0: return "机构平价锁仓 🔒"
+        if buy_inst and rate < 0:  return "机构折价吸筹 🏦"
+        if sel_inst and rate < 0:  return "机构折价减持 ⚠️"
+        if rate > 0:               return "溢价吸筹 📈"
+        if rate == 0:              return "平价过户"
+        return "折价甩卖 📉"
 
-    # 锁仓信号标记
-    if "折溢率" in df.columns:
-        df["锁仓信号"] = df["折溢率"].apply(
-            lambda x: "溢价买入 🔒" if x > 0 else ("平价成交 ✅" if x == 0 else "")
-        )
-        df.loc[mask_inst & ~mask_premium, "锁仓信号"] = "机构席位 🏦"
+    df["_buy_inst"] = mask_buy_inst
+    df["_sel_inst"] = mask_sell_inst
+    df["锁仓信号"] = df.apply(_signal, axis=1)
+    df.drop(columns=["_buy_inst", "_sel_inst"], inplace=True)
 
     # 标准化列名
     df = df.rename(columns={
@@ -274,7 +280,7 @@ def get_block_trades(days: int = 7) -> pd.DataFrame:
     keep = [c for c in keep if c in df.columns]
     df   = df[keep].sort_values("成交额(元)", ascending=False) if "成交额(元)" in df.columns else df
 
-    print(f"  共 {len(df)} 条平价/溢价大宗交易  主题命中: {(df['主题标签'] != '').sum()} 条")
+    print(f"  共 {len(df)} 条大宗交易  主题命中: {(df['主题标签'] != '').sum()} 条")
     return df.reset_index(drop=True)
 
 
