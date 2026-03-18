@@ -29,12 +29,15 @@ def send_report(excel_path: str, themes: list = None) -> bool:
         print("  [Email] 未配置 EMAIL_SENDER / EMAIL_PASSWORD / EMAIL_RECIPIENT，跳过发送")
         return False
 
+    # 支持多收件人，逗号分隔
+    recipients = [r.strip() for r in recipient.split(",") if r.strip()]
+
     today      = datetime.now().strftime("%Y-%m-%d")
     themes_str = "、".join(themes) if themes else "氢能源、核电、航空航天、算电协同、服务器液冷、太空光伏"
 
     msg = MIMEMultipart()
     msg["From"]    = sender
-    msg["To"]      = recipient
+    msg["To"]      = ", ".join(recipients)
     msg["Date"]    = formatdate(localtime=True)
     msg["Subject"] = f"A股聪明钱信号报告 {today}"
     msg.attach(MIMEText(
@@ -61,8 +64,8 @@ def send_report(excel_path: str, themes: list = None) -> bool:
             srv.ehlo()
             srv.starttls()
             srv.login(sender, password)
-            srv.sendmail(sender, [recipient], msg.as_string())
-        print(f"  [Email] ✓ 已发送至 {recipient}  附件: {filename}")
+            srv.sendmail(sender, recipients, msg.as_string())
+        print(f"  [Email] ✓ 已发送至 {', '.join(recipients)}  附件: {filename}")
         return True
     except Exception as e:
         print(f"  [Email] ✗ 发送失败: {e}")
