@@ -56,7 +56,8 @@ def send_report(excel_path: str, themes: list = None) -> bool:
                         "vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         part.set_payload(f.read())
     encoders.encode_base64(part)
-    part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
+    part.add_header("Content-Disposition", "attachment",
+                    filename=("utf-8", "", filename))
     msg.attach(part)
 
     try:
