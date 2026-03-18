@@ -1,0 +1,32 @@
+# ============================================================
+# 邮件配置示例文件
+# 使用方法：复制本文件为 config.ini，填入真实信息
+#   cp config.ini.example config.ini
+# ============================================================
+
+[email]
+
+# ── SMTP 服务器 ───────────────────────────────────────────────
+# 常用配置：
+#   QQ邮箱:  smtp_server=smtp.qq.com      smtp_port=465  use_ssl=true
+#   163邮箱: smtp_server=smtp.163.com     smtp_port=465  use_ssl=true
+#   Gmail:   smtp_server=smtp.gmail.com   smtp_port=587  use_ssl=false
+#   Outlook: smtp_server=smtp.office365.com smtp_port=587 use_ssl=false
+
+smtp_server   = smtp.qq.com
+smtp_port     = 465
+use_ssl       = true
+
+# ── 发件人（即 SMTP 登录账号）────────────────────────────────
+sender        = your_qq@qq.com
+
+# ── 授权码 / 应用密码（非登录密码！）────────────────────────
+# QQ邮箱：设置 → 账户 → POP3/SMTP → 生成授权码
+# Gmail：  账号安全 → 两步验证 → 应用密码
+password      = your_authorization_code_here
+
+# ── 收件人（可与发件人相同）──────────────────────────────────
+recipient     = your_email@example.com
+
+# ── 邮件主题前缀 ──────────────────────────────────────────────
+subject_prefix = A股聪明钱信号报告

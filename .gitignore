@@ -1,0 +1,25 @@
+# 配置文件（含密码，不上传）
+config.ini
+
+# 每日生成的报告文件
+output/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# 系统文件
+.DS_Store
+Thumbs.db
