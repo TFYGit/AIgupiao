@@ -239,6 +239,16 @@ def get_block_trades(days: int = 7) -> pd.DataFrame:
     mask_sell_inst = df["卖方营业部"].str.contains("机构专用", na=False) if "卖方营业部" in df.columns else pd.Series(False, index=df.index)
 
     # 锁仓信号：综合折溢率 + 买卖方席位
+    _SIGNAL_DESC = {
+        "机构溢价锁仓 🔒": "机构席位以高于市价买入，主动加仓意愿强，后续大概率持股锁仓",
+        "机构平价锁仓 🔒": "机构席位以市价买入，低调建仓，资金承接稳定",
+        "机构折价吸筹 🏦": "机构以低于市价买入，对手方急于出货，机构趁机低价吸筹",
+        "机构折价减持 ⚠️": "机构席位以折价卖出，可能为减持或调仓，注意风险",
+        "溢价吸筹 📈":     "非机构买方溢价成交，买方主动接盘意愿强，短期看多",
+        "平价过户":        "以市价平价成交，多见于大股东内部转让或正常换手",
+        "折价甩卖 📉":     "以低于市价折价出售，卖方急于套现，短期注意抛压",
+    }
+
     def _signal(row):
         rate     = row.get("折溢率", 0) or 0
         buy_inst = bool(row.get("_buy_inst", False))
@@ -254,6 +264,7 @@ def get_block_trades(days: int = 7) -> pd.DataFrame:
     df["_buy_inst"] = mask_buy_inst
     df["_sel_inst"] = mask_sell_inst
     df["锁仓信号"] = df.apply(_signal, axis=1)
+    df["信号解读"] = df["锁仓信号"].map(_SIGNAL_DESC)
     df.drop(columns=["_buy_inst", "_sel_inst"], inplace=True)
 
     # 标准化列名
@@ -276,7 +287,7 @@ def get_block_trades(days: int = 7) -> pd.DataFrame:
         df["主题标签"] = ""
 
     keep = ["股票代码", "股票名称", "交易日期", "收盘价", "成交价", "折溢率%",
-            "成交额(元)", "买方营业部", "锁仓信号", "主题标签"]
+            "成交额(元)", "买方营业部", "锁仓信号", "信号解读", "主题标签"]
     keep = [c for c in keep if c in df.columns]
     df   = df[keep].sort_values("成交额(元)", ascending=False) if "成交额(元)" in df.columns else df
 
