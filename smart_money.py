@@ -302,7 +302,7 @@ def get_block_trades(days: int = 7) -> pd.DataFrame:
 def get_volume_scanner() -> pd.DataFrame:
     section("0 / 4  量价异动扫描（主板）")
 
-    df, err = safe_call(ak.stock_zh_a_spot_em, timeout=180)
+    df, err = safe_call(ak.stock_zh_a_spot_em, timeout=360)
     if err or df is None or df.empty:
         print(f"  [!] 数据获取失败: {err}")
         return pd.DataFrame()
