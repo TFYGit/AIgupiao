@@ -300,56 +300,68 @@ def get_block_trades(days: int = 7) -> pd.DataFrame:
 # ══════════════════════════════════════════════════════════ #
 
 def get_volume_scanner() -> pd.DataFrame:
+    """
+    直接请求 push2.eastmoney.com（非 push2delay），单次获取全量 A 股快照。
+    避免 akshare stock_zh_a_spot_em 分 58 页打 push2delay 被 CI 环境拦截的问题。
+    字段：f12=代码 f14=名称 f2=最新价 f3=涨跌幅% f6=成交额(元) f8=换手率% f10=量比
+    """
     section("0 / 4  量价异动扫描（主板）")
 
-    df, err = safe_call(ak.stock_zh_a_spot_em, timeout=360)
-    if err or df is None or df.empty:
-        print(f"  [!] 数据获取失败: {err}")
+    url = "https://push2.eastmoney.com/api/qt/clist/get"
+    params = {
+        "pn": 1, "pz": 6000, "po": 1, "np": 1,
+        "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+        "fltt": 2, "invt": 2, "fid": "f3",
+        "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048",
+        "fields": "f2,f3,f6,f8,f10,f12,f14",
+    }
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://quote.eastmoney.com/center/gridlist.html",
+    }
+
+    try:
+        resp = requests.get(url, params=params, headers=headers, timeout=30)
+        items = resp.json().get("data", {}).get("diff", [])
+        if not items:
+            print("  [!] 无数据返回")
+            return pd.DataFrame()
+    except Exception as e:
+        print(f"  [!] 数据获取失败: {e}")
         return pd.DataFrame()
 
-    df["代码"] = df["代码"].astype(str).str.strip()
+    df = pd.DataFrame(items).rename(columns={
+        "f12": "股票代码", "f14": "股票名称", "f2": "最新价",
+        "f3": "涨跌幅%", "f6": "成交额(亿元)", "f8": "换手率%", "f10": "量比",
+    })
+
+    df["股票代码"] = df["股票代码"].astype(str).str.zfill(6)
+    for col in ["最新价", "涨跌幅%", "成交额(亿元)", "换手率%", "量比"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
     # 板块过滤：剔除创业板/科创板/北交所/ST/退
-    df = df[~df["代码"].str.match(r"^(30|68|8|4|92)")]
-    df = df[~df["名称"].str.contains("ST|退", case=False, na=False)]
-
-    # 数值转换
-    for col in ["成交额", "换手率", "量比", "涨跌幅"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-    df = df.dropna(subset=["成交额", "换手率", "量比", "涨跌幅"])
+    df = df[~df["股票代码"].str.match(r"^(30|68|8|4|92)")]
+    df = df[~df["股票名称"].str.contains("ST|退", case=False, na=False)]
 
     # 成交额：元 → 亿元
-    df["成交额"] = df["成交额"] / 1e8
+    df["成交额(亿元)"] = df["成交额(亿元)"] / 1e8
 
-    # 筛选条件
     cond = (
-        (df["成交额"]  > 0.3)  &
-        (df["换手率"] >= 3)    &
-        (df["换手率"] <= 25)   &
-        (df["量比"]   >= 1.2)  &
-        (df["量比"]   <= 3.0)  &
-        (df["涨跌幅"] >= 0.5)  &
-        (df["涨跌幅"] <= 7.0)
+        (df["成交额(亿元)"] > 0.3)  &
+        (df["换手率%"]    >= 3)     &
+        (df["换手率%"]    <= 25)    &
+        (df["量比"]       >= 1.2)   &
+        (df["量比"]       <= 3.0)   &
+        (df["涨跌幅%"]    >= 0.5)   &
+        (df["涨跌幅%"]    <= 7.0)
     )
     df = df[cond].copy()
 
-    df = df.rename(columns={
-        "代码":   "股票代码",
-        "名称":   "股票名称",
-        "最新价": "最新价",
-        "涨跌幅": "涨跌幅%",
-        "成交额": "成交额(亿元)",
-        "换手率": "换手率%",
-        "量比":   "量比",
-    })
-
     keep = ["股票代码", "股票名称", "最新价", "涨跌幅%", "成交额(亿元)", "换手率%", "量比"]
-    keep = [c for c in keep if c in df.columns]
     df = df[keep].sort_values("换手率%", ascending=False).reset_index(drop=True)
 
     for col in ["涨跌幅%", "成交额(亿元)", "换手率%", "量比"]:
-        if col in df.columns:
-            df[col] = df[col].round(2)
+        df[col] = df[col].round(2)
 
     print(f"  共筛出 {len(df)} 只符合条件的活跃主板个股")
     return df
