@@ -296,6 +296,66 @@ def get_block_trades(days: int = 7) -> pd.DataFrame:
 
 
 # ══════════════════════════════════════════════════════════ #
+#  0. 量价异动扫描（主板 换手3~25% 量比1.2~3 涨幅0.5~7%）  #
+# ══════════════════════════════════════════════════════════ #
+
+def get_volume_scanner() -> pd.DataFrame:
+    section("0 / 4  量价异动扫描（主板）")
+
+    df, err = safe_call(ak.stock_zh_a_spot_em, timeout=180)
+    if err or df is None or df.empty:
+        print(f"  [!] 数据获取失败: {err}")
+        return pd.DataFrame()
+
+    df["代码"] = df["代码"].astype(str).str.strip()
+
+    # 板块过滤：剔除创业板/科创板/北交所/ST/退
+    df = df[~df["代码"].str.match(r"^(30|68|8|4|92)")]
+    df = df[~df["名称"].str.contains("ST|退", case=False, na=False)]
+
+    # 数值转换
+    for col in ["成交额", "换手率", "量比", "涨跌幅"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.dropna(subset=["成交额", "换手率", "量比", "涨跌幅"])
+
+    # 成交额：元 → 亿元
+    df["成交额"] = df["成交额"] / 1e8
+
+    # 筛选条件
+    cond = (
+        (df["成交额"]  > 0.3)  &
+        (df["换手率"] >= 3)    &
+        (df["换手率"] <= 25)   &
+        (df["量比"]   >= 1.2)  &
+        (df["量比"]   <= 3.0)  &
+        (df["涨跌幅"] >= 0.5)  &
+        (df["涨跌幅"] <= 7.0)
+    )
+    df = df[cond].copy()
+
+    df = df.rename(columns={
+        "代码":   "股票代码",
+        "名称":   "股票名称",
+        "最新价": "最新价",
+        "涨跌幅": "涨跌幅%",
+        "成交额": "成交额(亿元)",
+        "换手率": "换手率%",
+        "量比":   "量比",
+    })
+
+    keep = ["股票代码", "股票名称", "最新价", "涨跌幅%", "成交额(亿元)", "换手率%", "量比"]
+    keep = [c for c in keep if c in df.columns]
+    df = df[keep].sort_values("换手率%", ascending=False).reset_index(drop=True)
+
+    for col in ["涨跌幅%", "成交额(亿元)", "换手率%", "量比"]:
+        if col in df.columns:
+            df[col] = df[col].round(2)
+
+    print(f"  共筛出 {len(df)} 只符合条件的活跃主板个股")
+    return df
+
+
+# ══════════════════════════════════════════════════════════ #
 #  4. 龙虎榜（昨日+今日，机构净买入）                       #
 # ══════════════════════════════════════════════════════════ #
 
@@ -351,7 +411,8 @@ def get_lhb_institution(period: str = "近一月") -> pd.DataFrame:
 def merge_and_output(research: pd.DataFrame,
                      northbound: pd.DataFrame,
                      block: pd.DataFrame,
-                     lhb: pd.DataFrame):
+                     lhb: pd.DataFrame,
+                     scanner: pd.DataFrame = None):
 
     print(f"\n{'='*60}")
     print("  综合信号合并 & 输出")
@@ -463,6 +524,8 @@ def merge_and_output(research: pd.DataFrame,
                 pass
             if not block.empty:
                 block.to_excel(writer, sheet_name="大宗交易", index=False)
+            if scanner is not None and not scanner.empty:
+                scanner.to_excel(writer, sheet_name="量价异动", index=False)
             if not lhb.empty:
                 lhb_out = lhb.copy()
                 # 批量查询所属行业（emweb.securities.eastmoney.com，非 push2，并行 ~2s）
@@ -543,12 +606,13 @@ def main():
     print(f"  关注主题: {', '.join(FOCUS_THEMES.keys())}")
     print(f"{'#'*60}")
 
+    scanner    = get_volume_scanner()
     research   = get_institutional_research(days=5)
     northbound = get_northbound_top(top_n=0)   # 0 = 全量
     block      = get_block_trades(days=3)
     lhb        = get_lhb_institution(period="近一月")
 
-    merged, excel_path = merge_and_output(research, northbound, block, lhb)
+    merged, excel_path = merge_and_output(research, northbound, block, lhb, scanner)
 
     print(f"\n{'#'*60}")
     print(f"  扫描完成  输出目录: {OUTPUT_DIR}")
