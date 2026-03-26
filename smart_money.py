@@ -363,6 +363,8 @@ def get_volume_scanner() -> pd.DataFrame:
     for col in ["涨跌幅%", "成交额(亿元)", "换手率%", "量比"]:
         df[col] = df[col].round(2)
 
+    df.insert(0, "交易日期", TODAY_DASH)
+
     print(f"  共筛出 {len(df)} 只符合条件的活跃主板个股")
     return df
 
