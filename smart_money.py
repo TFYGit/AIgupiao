@@ -526,11 +526,12 @@ def merge_and_output(research: pd.DataFrame,
                 for col in ["净流入(亿元)", "流入(亿元)", "流出(亿元)"]:
                     if col in nb_raw.columns:
                         nb_raw[col] = pd.to_numeric(nb_raw[col], errors="coerce")
+                nb_raw["成交额(亿元)"] = nb_raw["流入(亿元)"].fillna(0) + nb_raw["流出(亿元)"].fillna(0)
                 nb_raw["趋势"] = nb_raw["净流入(亿元)"].apply(
                     lambda x: "流入 ▲" if pd.notna(x) and x > 0 else ("流出 ▼" if pd.notna(x) and x < 0 else "—")
                 )
                 nb_raw["主题标签"] = nb_raw["行业板块"].apply(lambda x: ", ".join(match_themes(str(x))))
-                cols = ["行业板块", "涨跌幅%", "净流入(亿元)", "流入(亿元)", "流出(亿元)", "趋势", "领涨股", "领涨股涨跌幅%", "主题标签"]
+                cols = ["行业板块", "涨跌幅%", "成交额(亿元)", "净流入(亿元)", "流入(亿元)", "流出(亿元)", "趋势", "领涨股", "领涨股涨跌幅%", "主题标签"]
                 nb_raw[[c for c in cols if c in nb_raw.columns]].sort_values(
                     "净流入(亿元)", ascending=False
                 ).to_excel(writer, sheet_name="行业资金流向", index=False)
