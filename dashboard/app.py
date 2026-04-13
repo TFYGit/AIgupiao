@@ -121,14 +121,14 @@ def build_chart(df):
 # ---- 页面 ----
 st.title("📊 行业资金流向 · 实时")
 
+# 大盘指数（每3秒独立刷新）
+show_indices()
+
+st.divider()
+
 try:
     df = fetch_data()
     updated_at = datetime.now(BJT).strftime("%Y-%m-%d %H:%M:%S")
-
-    # 大盘指数（每3秒刷新）
-    show_indices()
-
-    st.divider()
 
     # 行业统计指标
     col1, col2, col3, col4 = st.columns(4)
