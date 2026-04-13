@@ -15,6 +15,23 @@ st.set_page_config(
 
 REFRESH_INTERVAL = 300  # 5分钟
 
+INDEX_CODES = {
+    "000001": "上证指数",
+    "399001": "深证成指",
+    "399006": "创业板指",
+    "000300": "沪深300",
+}
+
+
+@st.cache_data(ttl=REFRESH_INTERVAL)
+def fetch_indices():
+    df = ak.stock_zh_index_spot_em()
+    df = df[df["代码"].isin(INDEX_CODES.keys())][["代码", "最新价", "涨跌幅", "涨跌额"]].copy()
+    df["名称"] = df["代码"].map(INDEX_CODES)
+    for col in ["最新价", "涨跌幅", "涨跌额"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df.set_index("代码")
+
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_data():
@@ -32,6 +49,7 @@ def fetch_data():
             df[col] = pd.to_numeric(df[col], errors="coerce")
     df["成交额(亿元)"] = df["流入(亿元)"].fillna(0) + df["流出(亿元)"].fillna(0)
     df = df.sort_values("净流入(亿元)", ascending=False).reset_index(drop=True)
+    df.index = df.index + 1  # 从1开始
     return df
 
 
@@ -69,7 +87,21 @@ try:
     df = fetch_data()
     updated_at = datetime.now(BJT).strftime("%Y-%m-%d %H:%M:%S")
 
-    # 顶部指标
+    # 大盘指数
+    try:
+        idx_df = fetch_indices()
+        idx_cols = st.columns(len(INDEX_CODES))
+        for i, (code, name) in enumerate(INDEX_CODES.items()):
+            if code in idx_df.index:
+                row = idx_df.loc[code]
+                delta = f"{row['涨跌额']:+.2f}  ({row['涨跌幅']:+.2f}%)"
+                idx_cols[i].metric(name, f"{row['最新价']:.2f}", delta)
+    except Exception:
+        pass
+
+    st.divider()
+
+    # 行业统计指标
     col1, col2, col3, col4 = st.columns(4)
     inflow_count = (df["净流入(亿元)"] > 0).sum()
     outflow_count = (df["净流入(亿元)"] < 0).sum()
