@@ -118,50 +118,63 @@ def show_indices():
         pass
 
 
+def render_content(df, updated_at, is_open):
+    col1, col2, col3, col4 = st.columns(4)
+    inflow_count = (df["净流入(亿元)"] > 0).sum()
+    outflow_count = (df["净流入(亿元)"] < 0).sum()
+    total_vol = df["成交额(亿元)"].sum()
+    top_industry = df.iloc[0]["行业板块"] if not df.empty else "—"
+
+    col1.metric("流入行业数", f"{inflow_count} 个")
+    col2.metric("流出行业数", f"{outflow_count} 个")
+    col3.metric("全市场成交额", f"{total_vol:.0f} 亿元")
+    col4.metric("最强行业", top_industry)
+
+    if is_open:
+        st.caption(f"最后更新：{updated_at}　　每 5 分钟自动刷新")
+    else:
+        st.caption(f"数据截止：{updated_at}　　非交易时段（09:00-15:30），已停止刷新")
+
+    st.plotly_chart(build_chart(df), use_container_width=True)
+
+    st.subheader("详细数据")
+    display_cols = [c for c in [
+        "行业板块", "涨跌幅%", "成交额(亿元)", "净流入(亿元)",
+        "流入(亿元)", "流出(亿元)", "领涨股", "领涨股涨跌幅%"
+    ] if c in df.columns]
+
+    st.dataframe(
+        df[display_cols].style.format({
+            "涨跌幅%": "{:+.2f}%",
+            "成交额(亿元)": "{:.2f}",
+            "净流入(亿元)": "{:+.2f}",
+            "流入(亿元)": "{:.2f}",
+            "流出(亿元)": "{:.2f}",
+            "领涨股涨跌幅%": "{:+.2f}%",
+        }),
+        use_container_width=True,
+        height=600,
+    )
+
+
 @st.fragment(run_every=REFRESH_INTERVAL)
 def show_main_content():
-    if not is_market_open():
-        now_str = datetime.now(BJT).strftime("%H:%M")
-        st.info(f"休市中（当前北京时间 {now_str}）　交易时段 09:00 - 15:30")
-        return
-
+    is_open = is_market_open()
     try:
-        df = fetch_data()
-        updated_at = datetime.now(BJT).strftime("%Y-%m-%d %H:%M:%S")
+        if is_open:
+            df = fetch_data()
+            st.session_state["last_df"] = df
+            st.session_state["last_update"] = datetime.now(BJT).strftime("%Y-%m-%d %H:%M:%S")
+        elif "last_df" in st.session_state:
+            df = st.session_state["last_df"]
+        else:
+            # 非交易时段且没有缓存，拉一次数据作为初始展示
+            df = fetch_data()
+            st.session_state["last_df"] = df
+            st.session_state["last_update"] = datetime.now(BJT).strftime("%Y-%m-%d %H:%M:%S")
 
-        col1, col2, col3, col4 = st.columns(4)
-        inflow_count = (df["净流入(亿元)"] > 0).sum()
-        outflow_count = (df["净流入(亿元)"] < 0).sum()
-        total_vol = df["成交额(亿元)"].sum()
-        top_industry = df.iloc[0]["行业板块"] if not df.empty else "—"
-
-        col1.metric("流入行业数", f"{inflow_count} 个")
-        col2.metric("流出行业数", f"{outflow_count} 个")
-        col3.metric("全市场成交额", f"{total_vol:.0f} 亿元")
-        col4.metric("最强行业", top_industry)
-
-        st.caption(f"最后更新：{updated_at}　　每 5 分钟自动刷新")
-
-        st.plotly_chart(build_chart(df), use_container_width=True)
-
-        st.subheader("详细数据")
-        display_cols = [c for c in [
-            "行业板块", "涨跌幅%", "成交额(亿元)", "净流入(亿元)",
-            "流入(亿元)", "流出(亿元)", "领涨股", "领涨股涨跌幅%"
-        ] if c in df.columns]
-
-        st.dataframe(
-            df[display_cols].style.format({
-                "涨跌幅%": "{:+.2f}%",
-                "成交额(亿元)": "{:.2f}",
-                "净流入(亿元)": "{:+.2f}",
-                "流入(亿元)": "{:.2f}",
-                "流出(亿元)": "{:.2f}",
-                "领涨股涨跌幅%": "{:+.2f}%",
-            }),
-            use_container_width=True,
-            height=600,
-        )
+        updated_at = st.session_state.get("last_update", "—")
+        render_content(df, updated_at, is_open)
 
     except Exception as e:
         st.error(f"数据获取失败：{e}")
