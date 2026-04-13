@@ -73,12 +73,17 @@ def fetch_data():
 
 
 def build_chart(df):
-    colors = ["#ef5350" if v >= 0 else "#26a69a" for v in df["净流入(亿元)"]]
+    # 取净流入前20 + 净流出前20，中间的挤在一起没意义
+    top20 = df.nlargest(20, "净流入(亿元)")
+    bot20 = df.nsmallest(20, "净流入(亿元)").iloc[::-1]
+    chart_df = pd.concat([top20, bot20])
+
+    colors = ["#ef5350" if v >= 0 else "#26a69a" for v in chart_df["净流入(亿元)"]]
     fig = go.Figure(go.Bar(
-        x=df["行业板块"],
-        y=df["净流入(亿元)"],
+        x=chart_df["行业板块"],
+        y=chart_df["净流入(亿元)"],
         marker_color=colors,
-        text=df["净流入(亿元)"].apply(lambda x: f"{x:+.2f}"),
+        text=chart_df["净流入(亿元)"].apply(lambda x: f"{x:+.2f}"),
         textposition="outside",
         hovertemplate=(
             "<b>%{x}</b><br>"
@@ -87,11 +92,11 @@ def build_chart(df):
         ),
     ))
     fig.update_layout(
-        title="各行业净流入排行（亿元）",
+        title="净流入TOP20 · 净流出TOP20",
         xaxis_tickangle=-45,
         yaxis_title="净流入(亿元)",
-        height=500,
-        margin=dict(t=50, b=120),
+        height=520,
+        margin=dict(t=50, b=130),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
     )
