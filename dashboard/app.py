@@ -56,6 +56,7 @@ def fetch_indices():
     return df.set_index("代码")
 
 
+@st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_market_turnover() -> str:
     import requests
     try:
@@ -137,9 +138,7 @@ def render_content(df, updated_at, is_open):
     inflow_count = (df["净流入(亿元)"] > 0).sum()
     outflow_count = (df["净流入(亿元)"] < 0).sum()
     top_industry = df.iloc[0]["行业板块"] if not df.empty else "—"
-    turnover = fetch_market_turnover() if is_open else st.session_state.get("last_turnover", "—")
-    if is_open:
-        st.session_state["last_turnover"] = turnover
+    turnover = fetch_market_turnover()
 
     col1.metric("流入行业数", f"{inflow_count} 个")
     col2.metric("流出行业数", f"{outflow_count} 个")
