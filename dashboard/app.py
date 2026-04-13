@@ -99,7 +99,7 @@ try:
             "流入(亿元)": "{:.2f}",
             "流出(亿元)": "{:.2f}",
             "领涨股涨跌幅%": "{:+.2f}%",
-        }).background_gradient(subset=["净流入(亿元)"], cmap="RdYlGn"),
+        }),
         use_container_width=True,
         height=600,
     )
