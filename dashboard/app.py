@@ -13,6 +13,14 @@ st.set_page_config(
 )
 
 REFRESH_INTERVAL = 300  # 5分钟
+MARKET_OPEN  = (9, 0)   # 09:00
+MARKET_CLOSE = (15, 30) # 15:30
+
+
+def is_market_open() -> bool:
+    now = datetime.now(BJT)
+    t = (now.hour, now.minute)
+    return MARKET_OPEN <= t <= MARKET_CLOSE
 
 INDEX_CODES = {
     "000001": "上证指数",
@@ -112,6 +120,11 @@ def show_indices():
 
 @st.fragment(run_every=REFRESH_INTERVAL)
 def show_main_content():
+    if not is_market_open():
+        now_str = datetime.now(BJT).strftime("%H:%M")
+        st.info(f"休市中（当前北京时间 {now_str}）　交易时段 09:00 - 15:30")
+        return
+
     try:
         df = fetch_data()
         updated_at = datetime.now(BJT).strftime("%Y-%m-%d %H:%M:%S")
