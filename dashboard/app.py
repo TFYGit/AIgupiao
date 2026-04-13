@@ -23,7 +23,6 @@ INDEX_CODES = {
 }
 
 
-@st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_indices():
     import requests
     # 1=上交所 0=深交所
@@ -45,11 +44,26 @@ def fetch_indices():
             "涨跌额": item["f4"] / 100,
         })
     df = pd.DataFrame(rows)
-    # 按指定顺序排列
     order = list(INDEX_CODES.keys())
     df["sort"] = df["代码"].map({c: i for i, c in enumerate(order)})
     df = df.sort_values("sort").drop(columns="sort")
     return df.set_index("代码")
+
+
+@st.fragment(run_every=3)
+def show_indices():
+    try:
+        idx_df = fetch_indices()
+        idx_cols = st.columns(len(INDEX_CODES))
+        for i, (code, name) in enumerate(INDEX_CODES.items()):
+            if code in idx_df.index:
+                row = idx_df.loc[code]
+                delta_color = "normal" if row["涨跌额"] >= 0 else "inverse"
+                delta = f"{row['涨跌额']:+.2f}  ({row['涨跌幅']:+.2f}%)"
+                idx_cols[i].metric(name, f"{row['最新价']:.2f}", delta,
+                                   delta_color=delta_color)
+    except Exception:
+        pass
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
@@ -111,17 +125,8 @@ try:
     df = fetch_data()
     updated_at = datetime.now(BJT).strftime("%Y-%m-%d %H:%M:%S")
 
-    # 大盘指数
-    try:
-        idx_df = fetch_indices()
-        idx_cols = st.columns(len(INDEX_CODES))
-        for i, (code, name) in enumerate(INDEX_CODES.items()):
-            if code in idx_df.index:
-                row = idx_df.loc[code]
-                delta = f"{row['涨跌额']:+.2f}  ({row['涨跌幅']:+.2f}%)"
-                idx_cols[i].metric(name, f"{row['最新价']:.2f}", delta)
-    except Exception:
-        pass
+    # 大盘指数（每3秒刷新）
+    show_indices()
 
     st.divider()
 
