@@ -156,6 +156,4 @@ def show_main_content():
 
 # ---- 页面 ----
 st.title("📊 行业资金流向 · 实时")
-show_indices()
-st.divider()
 show_main_content()
