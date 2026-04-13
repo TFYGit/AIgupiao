@@ -25,11 +25,30 @@ INDEX_CODES = {
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_indices():
-    df = ak.stock_zh_index_spot_em()
-    df = df[df["代码"].isin(INDEX_CODES.keys())][["代码", "最新价", "涨跌幅", "涨跌额"]].copy()
-    df["名称"] = df["代码"].map(INDEX_CODES)
-    for col in ["最新价", "涨跌幅", "涨跌额"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+    import requests
+    # 1=上交所 0=深交所
+    secids = "1.000001,0.399001,0.399006,1.000300"
+    url = (
+        "https://push2.eastmoney.com/api/qt/ulist.np/get"
+        f"?secids={secids}&fields=f12,f14,f2,f3,f4"
+        "&ut=bd1d9ddb04089700cf9c27f6f7426281"
+    )
+    resp = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+    items = resp.json()["data"]["diff"]
+    rows = []
+    for item in items:
+        rows.append({
+            "代码": str(item["f12"]),
+            "名称": item["f14"],
+            "最新价": item["f2"] / 100,
+            "涨跌幅": item["f3"] / 100,
+            "涨跌额": item["f4"] / 100,
+        })
+    df = pd.DataFrame(rows)
+    # 按指定顺序排列
+    order = list(INDEX_CODES.keys())
+    df["sort"] = df["代码"].map({c: i for i, c in enumerate(order)})
+    df = df.sort_values("sort").drop(columns="sort")
     return df.set_index("代码")
 
 
