@@ -56,6 +56,20 @@ def fetch_indices():
     return df.set_index("代码")
 
 
+def fetch_market_turnover() -> str:
+    import requests
+    try:
+        hdrs = {"User-Agent": "Mozilla/5.0"}
+        sh = requests.get("https://push2.eastmoney.com/api/qt/stock/get?secid=1.000001&fields=f48",
+                          headers=hdrs, timeout=8).json()["data"]["f48"]
+        sz = requests.get("https://push2.eastmoney.com/api/qt/stock/get?secid=0.399001&fields=f48",
+                          headers=hdrs, timeout=8).json()["data"]["f48"]
+        total = (sh + sz) / 1e8
+        return f"{total:.0f} 亿元"
+    except Exception:
+        return "—"
+
+
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_data():
     df = ak.stock_fund_flow_industry(symbol="即时")
@@ -122,12 +136,14 @@ def render_content(df, updated_at, is_open):
     col1, col2, col3, col4 = st.columns(4)
     inflow_count = (df["净流入(亿元)"] > 0).sum()
     outflow_count = (df["净流入(亿元)"] < 0).sum()
-    total_vol = df["成交额(亿元)"].sum()
     top_industry = df.iloc[0]["行业板块"] if not df.empty else "—"
+    turnover = fetch_market_turnover() if is_open else st.session_state.get("last_turnover", "—")
+    if is_open:
+        st.session_state["last_turnover"] = turnover
 
     col1.metric("流入行业数", f"{inflow_count} 个")
     col2.metric("流出行业数", f"{outflow_count} 个")
-    col3.metric("全市场成交额", f"{total_vol:.0f} 亿元")
+    col3.metric("沪深成交额", turnover)
     col4.metric("最强行业", top_industry)
 
     if is_open:
