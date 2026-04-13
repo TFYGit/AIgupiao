@@ -3,7 +3,9 @@ import streamlit as st
 import akshare as ak
 import pandas as pd
 import plotly.graph_objects as go
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+BJT = timezone(timedelta(hours=8))
 
 st.set_page_config(
     page_title="行业资金流向",
@@ -65,7 +67,7 @@ st.title("📊 行业资金流向 · 实时")
 
 try:
     df = fetch_data()
-    updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    updated_at = datetime.now(BJT).strftime("%Y-%m-%d %H:%M:%S")
 
     # 顶部指标
     col1, col2, col3, col4 = st.columns(4)
