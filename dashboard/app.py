@@ -347,26 +347,22 @@ def show_main_content():
 
 def show_top5_history(current_df: pd.DataFrame):
     """页面底部展示近5日净流入TOP5趋势"""
-    history = load_history()
-    if not history:
-        return
-
     today = now_bjt().strftime("%Y-%m-%d")
-    # 用当前实时数据覆盖今日记录（每次执行脚本刷新）
-    top5_today = current_df.nlargest(5, "净流入(亿元)")["行业板块"].tolist()
+    history = load_history()
 
-    # 确定要展示的行业：今日TOP5
-    industries = top5_today
+    # 今日TOP5行业
+    industries = current_df.nlargest(5, "净流入(亿元)")["行业板块"].tolist()
 
-    # 构建表格：行=行业，列=日期
-    dates = sorted(history.keys())
+    # 历史日期（不含今日，避免重复）
+    hist_dates = sorted(d for d in history.keys() if d != today)
+
+    # 构建表格：行=行业，列=历史日期+今日实时
     rows = []
     for ind in industries:
         row = {"行业板块": ind}
-        for d in dates:
+        for d in hist_dates:
             val = history[d].get(ind)
-            row[d] = val if val is not None else None
-        # 今日实时值
+            row[d] = val
         cur = current_df.loc[current_df["行业板块"] == ind, "净流入(亿元)"]
         row[today + "（实时）"] = round(float(cur.values[0]), 2) if len(cur) > 0 else None
         rows.append(row)
@@ -375,7 +371,7 @@ def show_top5_history(current_df: pd.DataFrame):
 
     st.divider()
     st.subheader("净流入TOP5 · 近5日统计（亿元）")
-    # 格式化：有值显示+xx，None显示—
+
     def fmt(v):
         if v is None or (isinstance(v, float) and pd.isna(v)):
             return "—"
