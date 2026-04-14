@@ -1,10 +1,9 @@
-import json
-import os
 import streamlit as st
 import akshare as ak
 import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timezone, timedelta
+from supabase import create_client
 
 BJT = timezone(timedelta(hours=8))
 
@@ -20,7 +19,13 @@ MARKET_OPEN   = (9,  0)
 AUCTION_START = (9, 15)
 AUCTION_END   = (9, 25)
 MARKET_CLOSE  = (15, 30)
-HISTORY_FILE  = os.path.join(os.path.dirname(__file__), "top5_history.json")
+
+
+@st.cache_resource
+def get_supabase():
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
 
 
 def now_bjt():
@@ -28,28 +33,35 @@ def now_bjt():
 
 
 def load_history() -> dict:
-    """加载历史TOP5数据，格式: {日期: {行业: 净流入}}"""
+    """从 Supabase 加载近5个交易日所有板块数据，格式: {日期: {行业: 净流入}}"""
     try:
-        if os.path.exists(HISTORY_FILE):
-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+        sb = get_supabase()
+        rows = (sb.table("industry_fund_history")
+                  .select("date,industry,net_inflow")
+                  .order("date", desc=False)
+                  .execute().data)
+        history = {}
+        for r in rows:
+            d = str(r["date"])
+            history.setdefault(d, {})[r["industry"]] = r["net_inflow"]
+        # 只取最近5个交易日
+        dates = sorted(history.keys())[-5:]
+        return {d: history[d] for d in dates}
     except Exception:
-        pass
-    return {}
+        return {}
 
 
 def save_history(df: pd.DataFrame):
-    """把所有板块的净流入存入历史文件"""
+    """把所有板块当天净流入 upsert 到 Supabase"""
     today = now_bjt().strftime("%Y-%m-%d")
-    history = load_history()
-    history[today] = {row["行业板块"]: round(float(row["净流入(亿元)"]), 2)
-                      for _, row in df[["行业板块", "净流入(亿元)"]].iterrows()}
-    # 只保留最近5个交易日
-    dates = sorted(history.keys())[-5:]
-    history = {d: history[d] for d in dates}
     try:
-        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(history, f, ensure_ascii=False, indent=2)
+        sb = get_supabase()
+        rows = [
+            {"date": today, "industry": row["行业板块"],
+             "net_inflow": round(float(row["净流入(亿元)"]), 2)}
+            for _, row in df[["行业板块", "净流入(亿元)"]].iterrows()
+        ]
+        sb.table("industry_fund_history").upsert(rows, on_conflict="date,industry").execute()
     except Exception:
         pass
 
