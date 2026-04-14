@@ -321,20 +321,18 @@ def show_main_content():
     try:
         if is_open:
             new_df, updated_at = fetch_data()
-            # 如果拿到了新数据（时间戳变了），把旧数据存为prev
             if updated_at != st.session_state.get("last_update"):
                 st.session_state["prev_df"]     = st.session_state.get("last_df")
                 st.session_state["last_df"]     = new_df
                 st.session_state["last_update"] = updated_at
                 save_history(new_df)
             df = st.session_state["last_df"]
-        elif "last_df" in st.session_state:
-            df         = st.session_state["last_df"]
-            updated_at = st.session_state.get("last_update", "—")
         else:
+            # 非交易时段：每次加载都拉最新数据并存为当日历史
             df, updated_at = fetch_data()
             st.session_state["last_df"]     = df
             st.session_state["last_update"] = updated_at
+            save_history(df)
 
         prev_df    = st.session_state.get("prev_df")
         updated_at = st.session_state.get("last_update", "—")
