@@ -65,6 +65,7 @@ def fetch_data():
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
     df["成交额(亿元)"] = df["流入(亿元)"].fillna(0) + df["流出(亿元)"].fillna(0)
+    df["净流入率%"] = (df["净流入(亿元)"] / df["成交额(亿元)"].replace(0, float("nan")) * 100).round(2)
     df = df.sort_values("净流入(亿元)", ascending=False).reset_index(drop=True)
     df.index = df.index + 1
     updated_at = now_bjt().strftime("%Y-%m-%d %H:%M:%S")
@@ -240,11 +241,12 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None):
         )
 
     display_cols = [c for c in [
-        "行业板块", "涨跌幅%", "成交额(亿元)", "净流入(亿元)", "环比(亿元)",
+        "行业板块", "涨跌幅%", "净流入率%", "成交额(亿元)", "净流入(亿元)", "环比(亿元)",
         "流入(亿元)", "流出(亿元)", "领涨股", "领涨股涨跌幅%"
     ] if c in show_df.columns]
     fmt = {
         "涨跌幅%":      "{:+.2f}%",
+        "净流入率%":    "{:+.2f}%",
         "成交额(亿元)": "{:.2f}",
         "净流入(亿元)": "{:+.2f}",
         "环比(亿元)":   "{:+.2f}",
