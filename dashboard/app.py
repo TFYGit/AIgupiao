@@ -241,7 +241,7 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None):
         )
 
     display_cols = [c for c in [
-        "行业板块", "涨跌幅%", "净流入率%", "成交额(亿元)", "净流入(亿元)", "环比(亿元)",
+        "行业板块", "涨跌幅%", "成交额(亿元)", "净流入(亿元)", "净流入率%", "环比(亿元)",
         "流入(亿元)", "流出(亿元)", "领涨股", "领涨股涨跌幅%"
     ] if c in show_df.columns]
     fmt = {
