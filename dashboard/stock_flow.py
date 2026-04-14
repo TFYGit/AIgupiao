@@ -125,7 +125,7 @@ def show_content():
     st.divider()
 
     # ── Tab 切换 ──
-    tab1, tab2, tab3 = st.tabs(["📊 主力净流入 TOP30", "🔍 行业筛选", "📋 完整数据"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 主力净流入 TOP30", "🏆 板块TOP5精选", "🔍 行业筛选", "📋 完整数据"])
 
     with tab1:
         top30 = df.head(30)
@@ -156,6 +156,33 @@ def show_content():
         )
 
     with tab2:
+        # 按行业净流入合计，取TOP5行业，每行业展示前5只股票
+        ind_sum = (df.groupby("所属行业")["主力净流入"]
+                     .sum()
+                     .sort_values(ascending=False)
+                     .head(5))
+        top5_industries = ind_sum.index.tolist()
+
+        show_cols_t2 = ["股票代码", "股票名称", "最新价", "涨跌幅%",
+                        "主力净流入", "超大单净流入", "大单净流入", "成交额(亿)"]
+        fmt_t2 = {k: v for k, v in fmt.items() if k in show_cols_t2}
+
+        for rank, ind_name in enumerate(top5_industries, 1):
+            ind_total = ind_sum[ind_name]
+            ind_stocks = (df[df["所属行业"] == ind_name]
+                          .sort_values("主力净流入", ascending=False)
+                          .head(5)
+                          .reset_index(drop=True))
+            ind_stocks.index = ind_stocks.index + 1
+
+            st.markdown(f"### {rank}. {ind_name}　<span style='color:#ef5350;font-size:16px'>板块净流入合计：{ind_total:+.2f} 亿元</span>", unsafe_allow_html=True)
+            st.dataframe(
+                ind_stocks[show_cols_t2].style.format(fmt_t2),
+                use_container_width=True,
+                height=220,
+            )
+
+    with tab3:
         industries = sorted(df["所属行业"].dropna().unique())
         selected = st.selectbox("选择行业", ["全部"] + industries)
         filtered = df if selected == "全部" else df[df["所属行业"] == selected]
@@ -171,7 +198,7 @@ def show_content():
                 use_container_width=True, height=600,
             )
 
-    with tab3:
+    with tab4:
         all_cols = ["股票代码", "股票名称", "所属行业", "最新价", "涨跌幅%",
                     "主力净流入", "超大单净流入", "大单净流入", "中单净流入", "小单净流入", "成交额(亿)"]
         st.dataframe(
