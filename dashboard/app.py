@@ -67,7 +67,8 @@ def fetch_data():
     df["成交额(亿元)"] = df["流入(亿元)"].fillna(0) + df["流出(亿元)"].fillna(0)
     df = df.sort_values("净流入(亿元)", ascending=False).reset_index(drop=True)
     df.index = df.index + 1
-    return df
+    updated_at = now_bjt().strftime("%Y-%m-%d %H:%M:%S")
+    return df, updated_at
 
 
 @st.cache_data(ttl=AUCTION_INTERVAL)
@@ -255,17 +256,17 @@ def show_main_content():
     # 正常交易/收盘展示资金流向
     try:
         if is_open:
-            df = fetch_data()
+            df, updated_at = fetch_data()
             st.session_state["last_df"]     = df
-            st.session_state["last_update"] = now_bjt().strftime("%Y-%m-%d %H:%M:%S")
+            st.session_state["last_update"] = updated_at
         elif "last_df" in st.session_state:
-            df = st.session_state["last_df"]
+            df         = st.session_state["last_df"]
+            updated_at = st.session_state.get("last_update", "—")
         else:
-            df = fetch_data()
+            df, updated_at = fetch_data()
             st.session_state["last_df"]     = df
-            st.session_state["last_update"] = now_bjt().strftime("%Y-%m-%d %H:%M:%S")
+            st.session_state["last_update"] = updated_at
 
-        updated_at = st.session_state.get("last_update", "—")
         render_fund_flow(df, updated_at, is_open)
 
     except Exception as e:
