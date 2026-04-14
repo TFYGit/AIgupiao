@@ -57,7 +57,7 @@ def fetch_stock_flow():
             "股票代码":    str(item.get("f12", "")).zfill(6),
             "股票名称":    item.get("f14", "—"),
             "最新价":      item.get("f2", 0) if item.get("f2") else 0,
-            "涨跌幅%":     item.get("f3", 0) / 100 if item.get("f3") else 0,
+            "涨跌幅%":     item.get("f3", 0) if item.get("f3") else 0,
             "所属行业":    item.get("f100", "—") or "—",
             "主力净流入":  (item.get("f62", 0) or 0) / 1e8,
             "超大单净流入":(item.get("f66", 0) or 0) / 1e8,
