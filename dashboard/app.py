@@ -79,21 +79,8 @@ def is_auction_time() -> bool:
 # ---- 数据获取 ----
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
-def fetch_market_turnover() -> str:
-    import requests
-    try:
-        hdrs = {"User-Agent": "Mozilla/5.0"}
-        sh = requests.get("https://push2.eastmoney.com/api/qt/stock/get?secid=1.000001&fields=f48",
-                          headers=hdrs, timeout=8).json()["data"]["f48"]
-        sz = requests.get("https://push2.eastmoney.com/api/qt/stock/get?secid=0.399001&fields=f48",
-                          headers=hdrs, timeout=8).json()["data"]["f48"]
-        return f"{(sh + sz) / 1e8:.0f} 亿元"
-    except Exception:
-        return "—"
-
-
-@st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_data():
+    import requests
     df = ak.stock_fund_flow_industry(symbol="即时")
     df = df.rename(columns={
         "行业": "行业板块",
@@ -110,8 +97,15 @@ def fetch_data():
     df["净流入率%"] = (df["净流入(亿元)"] / df["成交额(亿元)"].replace(0, float("nan")) * 100).round(2)
     df = df.sort_values("净流入(亿元)", ascending=False).reset_index(drop=True)
     df.index = df.index + 1
+    # 全市场成交额（中证全指000985，含沪深京）
+    try:
+        r = requests.get("https://push2.eastmoney.com/api/qt/stock/get?secid=1.000985&fields=f48",
+                         headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
+        turnover = f"{r.json()['data']['f48'] / 1e8:.0f} 亿元"
+    except Exception:
+        turnover = "—"
     updated_at = now_bjt().strftime("%Y-%m-%d %H:%M:%S")
-    return df, updated_at
+    return df, updated_at, turnover
 
 
 @st.cache_data(ttl=AUCTION_INTERVAL)
@@ -244,12 +238,11 @@ def render_auction(df):
     )
 
 
-def render_fund_flow(df, updated_at, is_open, prev_df=None):
+def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—"):
     col1, col2, col3, col4 = st.columns(4)
     inflow_count  = (df["净流入(亿元)"] > 0).sum()
     outflow_count = (df["净流入(亿元)"] < 0).sum()
     top_industry  = df.iloc[0]["行业板块"] if not df.empty else "—"
-    turnover = fetch_market_turnover()
 
     # 环比delta
     d_inflow = d_outflow = None
@@ -320,23 +313,25 @@ def show_main_content():
     # 正常交易/收盘展示资金流向
     try:
         if is_open:
-            new_df, updated_at = fetch_data()
+            new_df, updated_at, turnover = fetch_data()
             if updated_at != st.session_state.get("last_update"):
                 st.session_state["prev_df"]     = st.session_state.get("last_df")
                 st.session_state["last_df"]     = new_df
                 st.session_state["last_update"] = updated_at
+                st.session_state["turnover"]    = turnover
                 save_history(new_df)
-            df = st.session_state["last_df"]
+            df       = st.session_state["last_df"]
+            turnover = st.session_state.get("turnover", "—")
         else:
-            # 非交易时段：每次加载都拉最新数据并存为当日历史
-            df, updated_at = fetch_data()
+            df, updated_at, turnover = fetch_data()
             st.session_state["last_df"]     = df
             st.session_state["last_update"] = updated_at
+            st.session_state["turnover"]    = turnover
             save_history(df)
 
         prev_df    = st.session_state.get("prev_df")
         updated_at = st.session_state.get("last_update", "—")
-        render_fund_flow(df, updated_at, is_open, prev_df)
+        render_fund_flow(df, updated_at, is_open, prev_df, turnover)
         show_top5_history(df)
 
     except Exception as e:
