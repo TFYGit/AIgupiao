@@ -39,12 +39,11 @@ def load_history() -> dict:
 
 
 def save_history(df: pd.DataFrame):
-    """把当前数据的TOP5净流入存入历史文件"""
+    """把所有板块的净流入存入历史文件"""
     today = now_bjt().strftime("%Y-%m-%d")
     history = load_history()
-    top5 = df.nlargest(5, "净流入(亿元)")[["行业板块", "净流入(亿元)"]].copy()
     history[today] = {row["行业板块"]: round(float(row["净流入(亿元)"]), 2)
-                      for _, row in top5.iterrows()}
+                      for _, row in df[["行业板块", "净流入(亿元)"]].iterrows()}
     # 只保留最近5个交易日
     dates = sorted(history.keys())[-5:]
     history = {d: history[d] for d in dates}
