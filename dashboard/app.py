@@ -201,15 +201,24 @@ def render_auction(df):
     )
 
 
-def render_fund_flow(df, updated_at, is_open):
+def render_fund_flow(df, updated_at, is_open, prev_df=None):
     col1, col2, col3, col4 = st.columns(4)
     inflow_count  = (df["净流入(亿元)"] > 0).sum()
     outflow_count = (df["净流入(亿元)"] < 0).sum()
     top_industry  = df.iloc[0]["行业板块"] if not df.empty else "—"
     turnover = fetch_market_turnover()
 
-    col1.metric("流入行业数", f"{inflow_count} 个")
-    col2.metric("流出行业数", f"{outflow_count} 个")
+    # 环比delta
+    d_inflow = d_outflow = None
+    if prev_df is not None:
+        d_inflow  = int(inflow_count)  - int((prev_df["净流入(亿元)"] > 0).sum())
+        d_outflow = int(outflow_count) - int((prev_df["净流入(亿元)"] < 0).sum())
+
+    col1.metric("流入行业数", f"{inflow_count} 个",
+                delta=f"{d_inflow:+d} 个" if d_inflow is not None else None)
+    col2.metric("流出行业数", f"{outflow_count} 个",
+                delta=f"{d_outflow:+d} 个" if d_outflow is not None else None,
+                delta_color="inverse")
     col3.metric("沪深成交额", turnover)
     col4.metric("最强行业",   top_industry)
 
@@ -220,20 +229,31 @@ def render_fund_flow(df, updated_at, is_open):
 
     st.plotly_chart(build_fund_flow_chart(df), use_container_width=True)
 
+    # 表格加净流入环比列
     st.subheader("详细数据")
+    show_df = df.copy()
+    if prev_df is not None:
+        prev_map = prev_df.set_index("行业板块")["净流入(亿元)"].to_dict() if "行业板块" in prev_df.columns else {}
+        show_df["环比(亿元)"] = show_df["行业板块"].map(
+            lambda x: show_df.loc[show_df["行业板块"] == x, "净流入(亿元)"].values[0] - prev_map.get(x, float("nan"))
+            if x in prev_map else float("nan")
+        )
+
     display_cols = [c for c in [
-        "行业板块", "涨跌幅%", "成交额(亿元)", "净流入(亿元)",
+        "行业板块", "涨跌幅%", "成交额(亿元)", "净流入(亿元)", "环比(亿元)",
         "流入(亿元)", "流出(亿元)", "领涨股", "领涨股涨跌幅%"
-    ] if c in df.columns]
+    ] if c in show_df.columns]
+    fmt = {
+        "涨跌幅%":      "{:+.2f}%",
+        "成交额(亿元)": "{:.2f}",
+        "净流入(亿元)": "{:+.2f}",
+        "环比(亿元)":   "{:+.2f}",
+        "流入(亿元)":   "{:.2f}",
+        "流出(亿元)":   "{:.2f}",
+        "领涨股涨跌幅%":"{:+.2f}%",
+    }
     st.dataframe(
-        df[display_cols].style.format({
-            "涨跌幅%":      "{:+.2f}%",
-            "成交额(亿元)": "{:.2f}",
-            "净流入(亿元)": "{:+.2f}",
-            "流入(亿元)":   "{:.2f}",
-            "流出(亿元)":   "{:.2f}",
-            "领涨股涨跌幅%":"{:+.2f}%",
-        }),
+        show_df[display_cols].style.format({k: v for k, v in fmt.items() if k in display_cols}),
         use_container_width=True,
         height=600,
     )
@@ -256,9 +276,13 @@ def show_main_content():
     # 正常交易/收盘展示资金流向
     try:
         if is_open:
-            df, updated_at = fetch_data()
-            st.session_state["last_df"]     = df
-            st.session_state["last_update"] = updated_at
+            new_df, updated_at = fetch_data()
+            # 如果拿到了新数据（时间戳变了），把旧数据存为prev
+            if updated_at != st.session_state.get("last_update"):
+                st.session_state["prev_df"]     = st.session_state.get("last_df")
+                st.session_state["last_df"]     = new_df
+                st.session_state["last_update"] = updated_at
+            df = st.session_state["last_df"]
         elif "last_df" in st.session_state:
             df         = st.session_state["last_df"]
             updated_at = st.session_state.get("last_update", "—")
@@ -267,7 +291,9 @@ def show_main_content():
             st.session_state["last_df"]     = df
             st.session_state["last_update"] = updated_at
 
-        render_fund_flow(df, updated_at, is_open)
+        prev_df    = st.session_state.get("prev_df")
+        updated_at = st.session_state.get("last_update", "—")
+        render_fund_flow(df, updated_at, is_open, prev_df)
 
     except Exception as e:
         st.error(f"数据获取失败：{e}")
