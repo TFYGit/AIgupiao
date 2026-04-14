@@ -1,4 +1,5 @@
 import streamlit as st
+import akshare as ak
 import pandas as pd
 import plotly.graph_objects as go
 import requests
@@ -156,31 +157,52 @@ def show_content():
         )
 
     with tab2:
-        # 按行业净流入合计，取TOP5行业，每行业展示前5只股票
-        ind_sum = (df.groupby("所属行业")["主力净流入"]
-                     .sum()
-                     .sort_values(ascending=False)
-                     .head(5))
-        top5_industries = ind_sum.index.tolist()
+        # 用行业资金流向接口取板块净流入TOP5
+        try:
+            ind_df = ak.stock_fund_flow_industry(symbol="即时")
+            ind_df = ind_df.rename(columns={
+                "行业": "行业板块",
+                "净额": "净流入(亿元)",
+                "行业-涨跌幅": "板块涨跌幅%",
+            })
+            ind_df["净流入(亿元)"] = pd.to_numeric(ind_df["净流入(亿元)"], errors="coerce")
+            top5_ind = ind_df.nlargest(5, "净流入(亿元)")[["行业板块", "净流入(亿元)", "板块涨跌幅%"]].reset_index(drop=True)
+        except Exception:
+            st.error("板块数据获取失败")
+            top5_ind = pd.DataFrame()
 
         show_cols_t2 = ["股票代码", "股票名称", "最新价", "涨跌幅%",
                         "主力净流入", "超大单净流入", "大单净流入", "成交额(亿)"]
         fmt_t2 = {k: v for k, v in fmt.items() if k in show_cols_t2}
 
-        for rank, ind_name in enumerate(top5_industries, 1):
-            ind_total = ind_sum[ind_name]
-            ind_stocks = (df[df["所属行业"] == ind_name]
+        for rank, row in top5_ind.iterrows():
+            ind_name   = row["行业板块"]
+            ind_inflow = row["净流入(亿元)"]
+            ind_pct    = row["板块涨跌幅%"]
+
+            # 个股中匹配行业名（东方财富行业名可能含Ⅱ等，做模糊匹配）
+            mask = df["所属行业"].str.contains(ind_name[:3], na=False)
+            ind_stocks = (df[mask]
                           .sort_values("主力净流入", ascending=False)
                           .head(5)
                           .reset_index(drop=True))
             ind_stocks.index = ind_stocks.index + 1
 
-            st.markdown(f"### {rank}. {ind_name}　<span style='color:#ef5350;font-size:16px'>板块净流入合计：{ind_total:+.2f} 亿元</span>", unsafe_allow_html=True)
-            st.dataframe(
-                ind_stocks[show_cols_t2].style.format(fmt_t2),
-                use_container_width=True,
-                height=220,
+            color = "#ef5350" if ind_inflow >= 0 else "#26a69a"
+            st.markdown(
+                f"### {rank+1}. {ind_name}　"
+                f"<span style='color:{color};font-size:15px'>净流入：{ind_inflow:+.2f} 亿元</span>"
+                f"　<span style='color:gray;font-size:13px'>板块涨跌幅：{ind_pct:+.2f}%</span>",
+                unsafe_allow_html=True
             )
+            if not ind_stocks.empty:
+                st.dataframe(
+                    ind_stocks[show_cols_t2].style.format(fmt_t2),
+                    use_container_width=True,
+                    height=220,
+                )
+            else:
+                st.caption("暂无个股数据")
 
     with tab3:
         industries = sorted(df["所属行业"].dropna().unique())
