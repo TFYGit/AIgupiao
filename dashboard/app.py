@@ -97,11 +97,15 @@ def fetch_data():
     df["净流入率%"] = (df["净流入(亿元)"] / df["成交额(亿元)"].replace(0, float("nan")) * 100).round(2)
     df = df.sort_values("净流入(亿元)", ascending=False).reset_index(drop=True)
     df.index = df.index + 1
-    # 全市场成交额（中证全指000985，含沪深京）
+    # 全市场成交额（中证全指000985沪深 + 北证50北交所）
     try:
-        r = requests.get("https://push2.eastmoney.com/api/qt/stock/get?secid=1.000985&fields=f48",
-                         headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
-        turnover = f"{r.json()['data']['f48'] / 1e8:.0f} 亿元"
+        hdrs = {"User-Agent": "Mozilla/5.0"}
+        r1 = requests.get("https://push2.eastmoney.com/api/qt/stock/get?secid=1.000985&fields=f48",
+                          headers=hdrs, timeout=8)
+        r2 = requests.get("https://push2.eastmoney.com/api/qt/stock/get?secid=0.899050&fields=f48",
+                          headers=hdrs, timeout=8)
+        total = r1.json()["data"]["f48"] + r2.json()["data"]["f48"]
+        turnover = f"{total / 1e8:.0f} 亿元"
     except Exception:
         turnover = "—"
     updated_at = now_bjt().strftime("%Y-%m-%d %H:%M:%S")
