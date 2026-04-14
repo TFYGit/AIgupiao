@@ -1,3 +1,5 @@
+import json
+import os
 import streamlit as st
 import akshare as ak
 import pandas as pd
@@ -18,10 +20,39 @@ MARKET_OPEN   = (9,  0)
 AUCTION_START = (9, 15)
 AUCTION_END   = (9, 25)
 MARKET_CLOSE  = (15, 30)
+HISTORY_FILE  = os.path.join(os.path.dirname(__file__), "top5_history.json")
 
 
 def now_bjt():
     return datetime.now(BJT)
+
+
+def load_history() -> dict:
+    """加载历史TOP5数据，格式: {日期: {行业: 净流入}}"""
+    try:
+        if os.path.exists(HISTORY_FILE):
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def save_history(df: pd.DataFrame):
+    """把当前数据的TOP5净流入存入历史文件"""
+    today = now_bjt().strftime("%Y-%m-%d")
+    history = load_history()
+    top5 = df.nlargest(5, "净流入(亿元)")[["行业板块", "净流入(亿元)"]].copy()
+    history[today] = {row["行业板块"]: round(float(row["净流入(亿元)"]), 2)
+                      for _, row in top5.iterrows()}
+    # 只保留最近5个交易日
+    dates = sorted(history.keys())[-5:]
+    history = {d: history[d] for d in dates}
+    try:
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 
 def is_market_open() -> bool:
@@ -284,6 +315,7 @@ def show_main_content():
                 st.session_state["prev_df"]     = st.session_state.get("last_df")
                 st.session_state["last_df"]     = new_df
                 st.session_state["last_update"] = updated_at
+                save_history(new_df)
             df = st.session_state["last_df"]
         elif "last_df" in st.session_state:
             df         = st.session_state["last_df"]
@@ -296,9 +328,52 @@ def show_main_content():
         prev_df    = st.session_state.get("prev_df")
         updated_at = st.session_state.get("last_update", "—")
         render_fund_flow(df, updated_at, is_open, prev_df)
+        show_top5_history(df)
 
     except Exception as e:
         st.error(f"数据获取失败：{e}")
+
+
+def show_top5_history(current_df: pd.DataFrame):
+    """页面底部展示近5日净流入TOP5趋势"""
+    history = load_history()
+    if not history:
+        return
+
+    today = now_bjt().strftime("%Y-%m-%d")
+    # 用当前实时数据覆盖今日记录（每次执行脚本刷新）
+    top5_today = current_df.nlargest(5, "净流入(亿元)")["行业板块"].tolist()
+
+    # 确定要展示的行业：今日TOP5
+    industries = top5_today
+
+    # 构建表格：行=行业，列=日期
+    dates = sorted(history.keys())
+    rows = []
+    for ind in industries:
+        row = {"行业板块": ind}
+        for d in dates:
+            val = history[d].get(ind)
+            row[d] = val if val is not None else None
+        # 今日实时值
+        cur = current_df.loc[current_df["行业板块"] == ind, "净流入(亿元)"]
+        row[today + "（实时）"] = round(float(cur.values[0]), 2) if len(cur) > 0 else None
+        rows.append(row)
+
+    table_df = pd.DataFrame(rows).set_index("行业板块")
+
+    st.divider()
+    st.subheader("净流入TOP5 · 近5日统计（亿元）")
+    # 格式化：有值显示+xx，None显示—
+    def fmt(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return "—"
+        return f"{v:+.2f}"
+
+    st.dataframe(
+        table_df.style.format(fmt),
+        use_container_width=True,
+    )
 
 
 # ---- 页面入口 ----
