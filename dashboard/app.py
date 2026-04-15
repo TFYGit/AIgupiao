@@ -160,9 +160,9 @@ def fetch_auction_data():
 # ---- 图表 ----
 
 def build_fund_flow_chart(df):
-    top20 = df.nlargest(20, "净流入(亿元)")
-    bot20 = df[~df.index.isin(top20.index)].nsmallest(20, "净流入(亿元)").iloc[::-1]
-    chart_df = pd.concat([top20, bot20])
+    top20 = df.nlargest(20, "净流入(亿元)").reset_index(drop=True)
+    bot20 = df[~df["行业板块"].isin(top20["行业板块"])].nsmallest(20, "净流入(亿元)").iloc[::-1].reset_index(drop=True)
+    chart_df = pd.concat([top20, bot20], ignore_index=True)
     colors = ["#ef5350" if v >= 0 else "#26a69a" for v in chart_df["净流入(亿元)"]]
 
     total_inflow  = df.loc[df["净流入(亿元)"] > 0, "净流入(亿元)"].sum()
