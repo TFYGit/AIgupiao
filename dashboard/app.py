@@ -164,6 +164,15 @@ def build_fund_flow_chart(df):
     bot20 = df.nsmallest(20, "净流入(亿元)").iloc[::-1]
     chart_df = pd.concat([top20, bot20])
     colors = ["#ef5350" if v >= 0 else "#26a69a" for v in chart_df["净流入(亿元)"]]
+
+    total_inflow  = df.loc[df["净流入(亿元)"] > 0, "净流入(亿元)"].sum()
+    total_outflow = df.loc[df["净流入(亿元)"] < 0, "净流入(亿元)"].sum()
+    title_text = (
+        f"净流入TOP20 · 净流出TOP20　　"
+        f"<span style='color:#ef5350'>净流入合计: {total_inflow:+.2f} 亿元</span>　　"
+        f"<span style='color:#26a69a'>净流出合计: {total_outflow:+.2f} 亿元</span>"
+    )
+
     fig = go.Figure(go.Bar(
         x=chart_df["行业板块"],
         y=chart_df["净流入(亿元)"],
@@ -173,11 +182,11 @@ def build_fund_flow_chart(df):
         hovertemplate="<b>%{x}</b><br>净流入: %{y:.2f} 亿元<br><extra></extra>",
     ))
     fig.update_layout(
-        title="净流入TOP20 · 净流出TOP20",
+        title=dict(text=title_text, font=dict(size=14)),
         xaxis_tickangle=-45,
         yaxis_title="净流入(亿元)",
         height=520,
-        margin=dict(t=50, b=130),
+        margin=dict(t=60, b=130),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
     )
