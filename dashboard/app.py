@@ -160,8 +160,8 @@ def fetch_auction_data():
 # ---- 图表 ----
 
 def build_fund_flow_chart(df):
-    top20 = df.nlargest(20, "净流入(亿元)")
-    bot20 = df.nsmallest(20, "净流入(亿元)").iloc[::-1]
+    top20 = df[df["净流入(亿元)"] > 0].nlargest(20, "净流入(亿元)")
+    bot20 = df[df["净流入(亿元)"] < 0].nsmallest(20, "净流入(亿元)").iloc[::-1]
     chart_df = pd.concat([top20, bot20])
     colors = ["#ef5350" if v >= 0 else "#26a69a" for v in chart_df["净流入(亿元)"]]
 
