@@ -161,7 +161,7 @@ def fetch_auction_data():
 
 def build_fund_flow_chart(df):
     top20 = df.nlargest(20, "净流入(亿元)")
-    bot20 = df.nsmallest(20, "净流入(亿元)").iloc[::-1]
+    bot20 = df.nsmallest(20, "净流入(亿元)")
     chart_df = pd.concat([top20, bot20])
     colors = ["#ef5350" if v >= 0 else "#26a69a" for v in chart_df["净流入(亿元)"]]
     fig = go.Figure(go.Bar(
@@ -244,10 +244,13 @@ def render_auction(df):
 
 
 def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—"):
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     inflow_count  = (df["净流入(亿元)"] > 0).sum()
     outflow_count = (df["净流入(亿元)"] < 0).sum()
     top_industry  = df.iloc[0]["行业板块"] if not df.empty else "—"
+
+    total_inflow  = df.loc[df["净流入(亿元)"] > 0, "净流入(亿元)"].sum()
+    total_outflow = df.loc[df["净流入(亿元)"] < 0, "净流入(亿元)"].sum()
 
     # 环比delta
     d_inflow = d_outflow = None
@@ -260,8 +263,10 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—"):
     col2.metric("流出行业数", f"{outflow_count} 个",
                 delta=f"{d_outflow:+d} 个" if d_outflow is not None else None,
                 delta_color="inverse")
-    col3.metric("今日市场成交额总计", turnover)
-    col4.metric("最强行业",   top_industry)
+    col3.metric("净流入总额", f"{total_inflow:+.2f} 亿元")
+    col4.metric("净流出总额", f"{total_outflow:+.2f} 亿元", delta_color="inverse")
+    col5.metric("今日市场成交额总计", turnover)
+    col6.metric("最强行业", top_industry)
 
     if is_open:
         st.caption(f"最后更新：{updated_at}　　每 5 分钟自动刷新")
@@ -366,6 +371,11 @@ def show_top5_history(current_df: pd.DataFrame):
         rows.append(row)
 
     table_df = pd.DataFrame(rows).set_index("行业板块")
+    # 最新数据（实时）放第一列，历史日期降序排列
+    today_col = today + "（实时）"
+    hist_cols = sorted(hist_dates, reverse=True)
+    ordered_cols = [c for c in [today_col] + hist_cols if c in table_df.columns]
+    table_df = table_df[ordered_cols]
 
     st.divider()
     st.subheader("净流入TOP5 · 近5日统计（亿元）")
