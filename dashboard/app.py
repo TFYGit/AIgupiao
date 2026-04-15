@@ -253,13 +253,10 @@ def render_auction(df):
 
 
 def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—"):
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1, col2, col3, col4 = st.columns(4)
     inflow_count  = (df["净流入(亿元)"] > 0).sum()
     outflow_count = (df["净流入(亿元)"] < 0).sum()
     top_industry  = df.iloc[0]["行业板块"] if not df.empty else "—"
-
-    total_inflow  = df.loc[df["净流入(亿元)"] > 0, "净流入(亿元)"].sum()
-    total_outflow = df.loc[df["净流入(亿元)"] < 0, "净流入(亿元)"].sum()
 
     # 环比delta
     d_inflow = d_outflow = None
@@ -272,10 +269,8 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—"):
     col2.metric("流出行业数", f"{outflow_count} 个",
                 delta=f"{d_outflow:+d} 个" if d_outflow is not None else None,
                 delta_color="inverse")
-    col3.metric("净流入总额", f"{total_inflow:+.2f} 亿元")
-    col4.metric("净流出总额", f"{total_outflow:+.2f} 亿元", delta_color="inverse")
-    col5.metric("今日市场成交额总计", turnover)
-    col6.metric("最强行业", top_industry)
+    col3.metric("今日市场成交额总计", turnover)
+    col4.metric("最强行业", top_industry)
 
     if is_open:
         st.caption(f"最后更新：{updated_at}　　每 5 分钟自动刷新")
