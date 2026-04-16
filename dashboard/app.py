@@ -337,11 +337,19 @@ def show_main_content():
             df       = st.session_state["last_df"]
             turnover = st.session_state.get("turnover", "—")
         else:
-            df, updated_at, turnover = fetch_data()
-            st.session_state["last_df"]     = df
-            st.session_state["last_update"] = updated_at
-            st.session_state["turnover"]    = turnover
-            save_history(df)
+            # 非交易时段：优先用缓存，避免反复请求失败
+            if st.session_state.get("last_df") is None:
+                try:
+                    df, updated_at, turnover = fetch_data()
+                    st.session_state["last_df"]     = df
+                    st.session_state["last_update"] = updated_at
+                    st.session_state["turnover"]    = turnover
+                    save_history(df)
+                except Exception:
+                    st.warning("非交易时段，暂无数据")
+                    return
+            df       = st.session_state["last_df"]
+            turnover = st.session_state.get("turnover", "—")
 
         prev_df    = st.session_state.get("prev_df")
         updated_at = st.session_state.get("last_update", "—")
