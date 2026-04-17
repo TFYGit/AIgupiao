@@ -82,6 +82,8 @@ def is_auction_time() -> bool:
 def fetch_data():
     import requests
     df = ak.stock_fund_flow_industry(symbol="即时")
+    if df is None or len(df) < 80:
+        raise ValueError(f"行业数据不完整，仅返回 {0 if df is None else len(df)} 条，稍后重试")
     df = df.rename(columns={
         "行业": "行业板块",
         "行业-涨跌幅": "涨跌幅%",
@@ -327,13 +329,18 @@ def show_main_content():
     # 正常交易/收盘展示资金流向
     try:
         if is_open:
-            new_df, updated_at, turnover = fetch_data()
-            if updated_at != st.session_state.get("last_update"):
-                st.session_state["prev_df"]     = st.session_state.get("last_df")
-                st.session_state["last_df"]     = new_df
-                st.session_state["last_update"] = updated_at
-                st.session_state["turnover"]    = turnover
-                save_history(new_df)
+            try:
+                new_df, updated_at, turnover = fetch_data()
+                if updated_at != st.session_state.get("last_update"):
+                    st.session_state["prev_df"]     = st.session_state.get("last_df")
+                    st.session_state["last_df"]     = new_df
+                    st.session_state["last_update"] = updated_at
+                    st.session_state["turnover"]    = turnover
+                    save_history(new_df)
+            except Exception as e:
+                # 数据不完整时保留上次缓存，不覆盖
+                if st.session_state.get("last_df") is None:
+                    raise
             df       = st.session_state["last_df"]
             turnover = st.session_state.get("turnover", "—")
         else:
