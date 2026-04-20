@@ -122,7 +122,7 @@ def fetch_auction_data():
     # 统一列名
     rename = {}
     for col in df.columns:
-        if "名称" in col or col == "板块名称":
+        if "名称" in col or "板块" in col:
             rename[col] = "行业板块"
         elif "涨跌幅" in col:
             rename[col] = "涨跌幅%"
@@ -132,8 +132,15 @@ def fetch_auction_data():
             rename[col] = "下跌家数"
     df = df.rename(columns=rename)
 
+    # 兜底：如果还没有行业板块列，用第一个字符串列
+    if "行业板块" not in df.columns:
+        str_cols = df.select_dtypes(include="object").columns
+        if len(str_cols) > 0:
+            df = df.rename(columns={str_cols[0]: "行业板块"})
+        else:
+            raise ValueError(f"无法识别行业板块列，实际列名：{list(df.columns)}")
+
     if "涨跌幅%" not in df.columns:
-        # 尝试找第一个数值列作为涨跌幅
         num_cols = df.select_dtypes(include="number").columns
         if len(num_cols) > 0:
             df = df.rename(columns={num_cols[0]: "涨跌幅%"})
