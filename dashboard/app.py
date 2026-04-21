@@ -99,18 +99,18 @@ def _fetch_industry_df(timeout=30):
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_zt_count() -> dict:
-    """从涨停板池按行业统计涨停数，返回 {行业名: 涨停数}"""
-    from datetime import datetime
+    """从行业板块行情取涨停家数，返回 {行业名: 涨停数}"""
     try:
-        today = datetime.now().strftime("%Y%m%d")
-        df = ak.stock_zt_pool_em(date=today)
+        df = ak.stock_board_industry_spot_em()
         if df is None or df.empty:
             return {}
-        # 东方财富涨停板列名包含"所属行业"
-        ind_col = next((c for c in df.columns if "行业" in c), None)
-        if ind_col is None:
+        # 找板块名称列和涨停家数列
+        name_col = next((c for c in df.columns if "名称" in c or "板块" in c), None)
+        zt_col   = next((c for c in df.columns if "涨停" in c), None)
+        if name_col is None or zt_col is None:
             return {}
-        return df[ind_col].value_counts().to_dict()
+        df[zt_col] = pd.to_numeric(df[zt_col], errors="coerce").fillna(0).astype(int)
+        return dict(zip(df[name_col], df[zt_col]))
     except Exception:
         return {}
 
