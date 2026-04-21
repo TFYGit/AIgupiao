@@ -98,6 +98,26 @@ def _fetch_industry_df(timeout=30):
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
+def fetch_zt_count() -> dict:
+    """获取各行业板块涨停家数，返回 {行业名: 涨停数}"""
+    import requests
+    try:
+        url = "https://push2.eastmoney.com/api/qt/clist/get"
+        params = {
+            "pn": 1, "pz": 200, "po": 1, "np": 1,
+            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+            "fltt": 2, "invt": 2, "fid": "f3",
+            "fs": "m:90+t:2+f:!50",
+            "fields": "f14,f124",
+        }
+        resp = requests.get(url, params=params, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        items = resp.json().get("data", {}).get("diff", []) or []
+        return {item["f14"]: int(item.get("f124") or 0) for item in items if item.get("f14")}
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_data():
     import requests
     df = _fetch_industry_df(timeout=30)
@@ -116,6 +136,11 @@ def fetch_data():
             df[col] = pd.to_numeric(df[col], errors="coerce")
     df["成交额(亿元)"] = df["流入(亿元)"].fillna(0) + df["流出(亿元)"].fillna(0)
     df["净流入率%"] = (df["净流入(亿元)"] / df["成交额(亿元)"].replace(0, float("nan")) * 100).round(2)
+
+    # 合并涨停家数
+    zt_map = fetch_zt_count()
+    df["涨停数"] = df["行业板块"].map(zt_map).fillna(0).astype(int)
+
     df = df.sort_values("净流入(亿元)", ascending=False).reset_index(drop=True)
     df.index = df.index + 1
     # 全市场成交额：上证综指 + 深证成指 + 北证50
@@ -319,7 +344,7 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—"):
 
     display_cols = [c for c in [
         "行业板块", "涨跌幅%", "成交额(亿元)", "净流入(亿元)", "净流入率%", "环比(亿元)",
-        "流入(亿元)", "流出(亿元)", "领涨股", "领涨股涨跌幅%"
+        "流入(亿元)", "流出(亿元)", "涨停数", "领涨股", "领涨股涨跌幅%"
     ] if c in show_df.columns]
     fmt = {
         "涨跌幅%":      "{:+.2f}%",
