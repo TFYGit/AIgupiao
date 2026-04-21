@@ -78,11 +78,30 @@ def is_auction_time() -> bool:
 
 # ---- 数据获取 ----
 
+def _fetch_industry_df(timeout=30):
+    """带超时的 akshare 行业资金流向请求"""
+    import threading
+    result, error = [None], [None]
+    def _run():
+        try:
+            result[0] = ak.stock_fund_flow_industry(symbol="即时")
+        except Exception as e:
+            error[0] = e
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        raise TimeoutError(f"行业资金流向接口超时（>{timeout}s）")
+    if error[0]:
+        raise error[0]
+    return result[0]
+
+
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_data():
     import requests
-    df = ak.stock_fund_flow_industry(symbol="即时")
-    if df is None or len(df) < 80:
+    df = _fetch_industry_df(timeout=30)
+    if df is None or len(df) < 60:
         raise ValueError(f"行业数据不完整，仅返回 {0 if df is None else len(df)} 条，稍后重试")
     df = df.rename(columns={
         "行业": "行业板块",
