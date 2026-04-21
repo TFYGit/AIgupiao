@@ -101,8 +101,8 @@ def _fetch_industry_df(timeout=30):
 def fetch_data():
     import requests
     df = _fetch_industry_df(timeout=30)
-    if df is None or len(df) < 60:
-        raise ValueError(f"行业数据不完整，仅返回 {0 if df is None else len(df)} 条，稍后重试")
+    if df is None or len(df) == 0:
+        raise ValueError("行业数据为空，稍后重试")
     df = df.rename(columns={
         "行业": "行业板块",
         "行业-涨跌幅": "涨跌幅%",
@@ -354,36 +354,27 @@ def show_main_content():
 
     # 正常交易/收盘展示资金流向
     try:
-        if is_open:
-            try:
-                new_df, updated_at, turnover = fetch_data()
-                if updated_at != st.session_state.get("last_update"):
-                    st.session_state["prev_df"]     = st.session_state.get("last_df")
-                    st.session_state["last_df"]     = new_df
-                    st.session_state["last_update"] = updated_at
-                    st.session_state["turnover"]    = turnover
+        # 尝试拉新数据，失败时保留缓存
+        try:
+            new_df, updated_at, turnover = fetch_data()
+            if updated_at != st.session_state.get("last_update"):
+                st.session_state["prev_df"]     = st.session_state.get("last_df")
+                st.session_state["last_df"]     = new_df
+                st.session_state["last_update"] = updated_at
+                st.session_state["turnover"]    = turnover
+                if is_open:
                     save_history(new_df)
-            except Exception as e:
-                # 数据不完整时保留上次缓存，不覆盖
-                if st.session_state.get("last_df") is None:
-                    raise
-            df       = st.session_state["last_df"]
-            turnover = st.session_state.get("turnover", "—")
-        else:
-            # 非交易时段：优先用缓存，避免反复请求失败
+        except Exception as fetch_err:
             if st.session_state.get("last_df") is None:
-                try:
-                    df, updated_at, turnover = fetch_data()
-                    st.session_state["last_df"]     = df
-                    st.session_state["last_update"] = updated_at
-                    st.session_state["turnover"]    = turnover
-                    save_history(df)
-                except Exception:
-                    st.warning("非交易时段，暂无数据")
-                    return
-            df       = st.session_state["last_df"]
-            turnover = st.session_state.get("turnover", "—")
+                st.error(f"数据获取失败且无缓存：{fetch_err}")
+                return
+            st.caption(f"⚠️ 数据刷新失败（{fetch_err}），显示上次缓存")
 
+        df       = st.session_state["last_df"]
+        turnover = st.session_state.get("turnover", "—")
+
+        if df is None:
+            st.warning("暂无数据")
         prev_df    = st.session_state.get("prev_df")
         updated_at = st.session_state.get("last_update", "—")
         render_fund_flow(df, updated_at, is_open, prev_df, turnover)
