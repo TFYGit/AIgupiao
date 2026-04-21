@@ -99,20 +99,18 @@ def _fetch_industry_df(timeout=30):
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_zt_count() -> dict:
-    """获取各行业板块涨停家数，返回 {行业名: 涨停数}"""
-    import requests
+    """从涨停板池按行业统计涨停数，返回 {行业名: 涨停数}"""
+    from datetime import datetime
     try:
-        url = "https://push2.eastmoney.com/api/qt/clist/get"
-        params = {
-            "pn": 1, "pz": 200, "po": 1, "np": 1,
-            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
-            "fltt": 2, "invt": 2, "fid": "f3",
-            "fs": "m:90+t:2+f:!50",
-            "fields": "f14,f124",
-        }
-        resp = requests.get(url, params=params, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        items = resp.json().get("data", {}).get("diff", []) or []
-        return {item["f14"]: int(item.get("f124") or 0) for item in items if item.get("f14")}
+        today = datetime.now().strftime("%Y%m%d")
+        df = ak.stock_zt_pool_em(date=today)
+        if df is None or df.empty:
+            return {}
+        # 东方财富涨停板列名包含"所属行业"
+        ind_col = next((c for c in df.columns if "行业" in c), None)
+        if ind_col is None:
+            return {}
+        return df[ind_col].value_counts().to_dict()
     except Exception:
         return {}
 
