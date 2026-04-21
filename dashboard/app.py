@@ -403,6 +403,11 @@ def show_top5_history(current_df: pd.DataFrame):
     ordered_cols = [c for c in [today_col] + hist_cols if c in table_df.columns]
     table_df = table_df[ordered_cols]
 
+    # 5日净值合计列
+    table_df["5日合计"] = table_df[ordered_cols].apply(
+        lambda row: round(row.dropna().sum(), 2), axis=1
+    )
+
     st.divider()
     st.subheader("净流入TOP5 · 近5日统计（亿元）")
 
