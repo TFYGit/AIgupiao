@@ -1,6 +1,17 @@
 import streamlit as st
-import akshare as ak
 import pandas as pd
+
+# 代理绕过（必须在 import akshare 之前，防止系统代理拦截东方财富请求）
+import requests
+requests.utils.get_environ_proxies = lambda *a, **kw: {}
+_orig_menv = requests.Session.merge_environment_settings
+def _no_proxy(self, url, proxies, stream, verify, cert):
+    result = _orig_menv(self, url, proxies, stream, verify, cert)
+    result["proxies"] = {}
+    return result
+requests.Session.merge_environment_settings = _no_proxy
+
+import akshare as ak
 import plotly.graph_objects as go
 from datetime import datetime, timezone, timedelta
 from supabase import create_client
