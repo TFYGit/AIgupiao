@@ -104,12 +104,12 @@ _EM_BASE = {
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_zt_count() -> dict:
-    """从东方财富行业板块取涨停家数(f124)"""
+    """从东方财富行业板块取涨停家数(f128)"""
     try:
-        params = {**_EM_BASE, "fid": "f3", "fields": "f14,f124"}
+        params = {**_EM_BASE, "fid": "f3", "fields": "f14,f128"}
         items = requests.get(_EM_URL, params=params, headers=_EM_HEADERS,
                              timeout=10).json().get("data", {}).get("diff", []) or []
-        return {item["f14"]: int(item.get("f124") or 0)
+        return {item["f14"]: int(item.get("f128") or 0)
                 for item in items if item.get("f14")}
     except Exception:
         return {}
@@ -447,7 +447,7 @@ def show_top5_history(current_df: pd.DataFrame):
     table_df = table_df[ordered_cols]
 
     # 5日净值合计列
-    table_df["5日合计"] = table_df[ordered_cols].apply(
+    table_df["10日合计"] = table_df[ordered_cols].apply(
         lambda row: round(row.dropna().sum(), 2), axis=1
     )
 
