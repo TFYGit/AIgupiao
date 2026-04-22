@@ -44,7 +44,7 @@ def now_bjt():
 
 
 def load_history() -> dict:
-    """从 Supabase 加载近5个交易日所有板块数据，格式: {日期: {行业: 净流入}}"""
+    """从 Supabase 加载近10个交易日所有板块数据，格式: {日期: {行业: 净流入}}"""
     try:
         sb = get_supabase()
         rows = (sb.table("industry_fund_history")
@@ -55,8 +55,8 @@ def load_history() -> dict:
         for r in rows:
             d = str(r["date"])
             history.setdefault(d, {})[r["industry"]] = r["net_inflow"]
-        # 只取最近5个交易日
-        dates = sorted(history.keys())[-5:]
+        # 只取最近10个交易日
+        dates = sorted(history.keys())[-10:]
         return {d: history[d] for d in dates}
     except Exception:
         return {}
@@ -418,7 +418,7 @@ def show_main_content():
 
 
 def show_top5_history(current_df: pd.DataFrame):
-    """页面底部展示近5日净流入TOP5趋势"""
+    """页面底部展示近10日净流入TOP5趋势"""
     today = now_bjt().strftime("%Y-%m-%d")
     history = load_history()
 
@@ -452,7 +452,7 @@ def show_top5_history(current_df: pd.DataFrame):
     )
 
     st.divider()
-    st.subheader("净流入TOP5 · 近5日统计（亿元）")
+    st.subheader("净流入TOP5 · 近10日统计（亿元）")
 
     def fmt(v):
         if v is None or (isinstance(v, float) and pd.isna(v)):
