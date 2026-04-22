@@ -118,7 +118,8 @@ def fetch_zt_count() -> dict:
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_data():
     # 直接请求东方财富，不再依赖 akshare（akshare 在 Streamlit Cloud 会卡死）
-    params = {**_EM_BASE, "fields": "f14,f3,f62,f184,f6,f128,f136,f124"}
+    # f62=主力净流入 f78=中单净流入 f84=小单净流入 f6=成交额 f128=领涨股 f136=领涨股涨跌幅
+    params = {**_EM_BASE, "fields": "f14,f3,f62,f78,f84,f184,f6,f128,f136,f124"}
     resp = requests.get(_EM_URL, params=params, headers=_EM_HEADERS, timeout=15)
     items = resp.json().get("data", {}).get("diff", []) or []
     if not items:
@@ -126,14 +127,18 @@ def fetch_data():
 
     rows = []
     for item in items:
-        net = (item.get("f62") or 0) / 1e8          # 净流入(亿元)
-        total = (item.get("f6") or 0) / 1e8         # 成交额(亿元)
+        zl_net  = (item.get("f62") or 0) / 1e8   # 主力净流入
+        mid_net = (item.get("f78") or 0) / 1e8   # 中单净流入
+        sml_net = (item.get("f84") or 0) / 1e8   # 小单净流入
+        net     = zl_net + mid_net + sml_net      # 全市场净流入
+        total   = (item.get("f6") or 0) / 1e8    # 成交额
         inflow  = (total + net) / 2
         outflow = (total - net) / 2
         rows.append({
             "行业板块":     item.get("f14", ""),
             "涨跌幅%":      item.get("f3") or 0,
             "净流入(亿元)": round(net, 2),
+            "主力净流入(亿元)": round(zl_net, 2),
             "净流入率%":    item.get("f184") or 0,
             "成交额(亿元)": round(total, 2),
             "流入(亿元)":   round(inflow, 2),
@@ -341,7 +346,7 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—"):
         )
 
     display_cols = [c for c in [
-        "行业板块", "涨跌幅%", "成交额(亿元)", "净流入(亿元)", "净流入率%", "环比(亿元)",
+        "行业板块", "涨跌幅%", "成交额(亿元)", "净流入(亿元)", "主力净流入(亿元)", "净流入率%", "环比(亿元)",
         "流入(亿元)", "流出(亿元)", "涨停数", "领涨股", "领涨股涨跌幅%"
     ] if c in show_df.columns]
     fmt = {
