@@ -99,18 +99,22 @@ def _fetch_industry_df(timeout=30):
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_zt_count() -> dict:
-    """从行业板块行情取涨停家数，返回 {行业名: 涨停数}"""
+    """从东方财富行业板块取涨停家数(f124)，返回 {行业名: 涨停数}"""
+    import requests
     try:
-        df = ak.stock_board_industry_spot_em()
-        if df is None or df.empty:
-            return {}
-        # 找板块名称列和涨停家数列
-        name_col = next((c for c in df.columns if "名称" in c or "板块" in c), None)
-        zt_col   = next((c for c in df.columns if "涨停" in c), None)
-        if name_col is None or zt_col is None:
-            return {}
-        df[zt_col] = pd.to_numeric(df[zt_col], errors="coerce").fillna(0).astype(int)
-        return dict(zip(df[name_col], df[zt_col]))
+        url = "https://push2.eastmoney.com/api/qt/clist/get"
+        params = {
+            "pn": 1, "pz": 200, "po": 1, "np": 1,
+            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+            "fltt": 2, "invt": 2, "fid": "f3",
+            "fs": "m:90+t:2+f:!50",
+            "fields": "f14,f124",
+        }
+        resp = requests.get(url, params=params,
+                            headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        items = resp.json().get("data", {}).get("diff", []) or []
+        return {item["f14"]: int(item.get("f124") or 0)
+                for item in items if item.get("f14")}
     except Exception:
         return {}
 
@@ -159,35 +163,27 @@ def fetch_data():
 
 @st.cache_data(ttl=AUCTION_INTERVAL)
 def fetch_auction_data():
-    """集合竞价期间：各板块高开/低开/平开分布"""
-    df = ak.stock_board_industry_spot_em()
-    # 统一列名
-    rename = {}
-    for col in df.columns:
-        if "名称" in col or "板块" in col:
-            rename[col] = "行业板块"
-        elif "涨跌幅" in col:
-            rename[col] = "涨跌幅%"
-        elif "上涨" in col:
-            rename[col] = "上涨家数"
-        elif "下跌" in col:
-            rename[col] = "下跌家数"
-    df = df.rename(columns=rename)
+    """集合竞价期间：直接请求东方财富行业板块行情"""
+    import requests
+    url = "https://push2.eastmoney.com/api/qt/clist/get"
+    params = {
+        "pn": 1, "pz": 200, "po": 1, "np": 1,
+        "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+        "fltt": 2, "invt": 2, "fid": "f3",
+        "fs": "m:90+t:2+f:!50",
+        "fields": "f14,f3,f104,f105",
+    }
+    resp = requests.get(url, params=params,
+                        headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+    items = resp.json().get("data", {}).get("diff", []) or []
+    if not items:
+        raise ValueError("集合竞价数据为空")
 
-    # 兜底：如果还没有行业板块列，用第一个字符串列
-    if "行业板块" not in df.columns:
-        str_cols = df.select_dtypes(include="object").columns
-        if len(str_cols) > 0:
-            df = df.rename(columns={str_cols[0]: "行业板块"})
-        else:
-            raise ValueError(f"无法识别行业板块列，实际列名：{list(df.columns)}")
-
-    if "涨跌幅%" not in df.columns:
-        num_cols = df.select_dtypes(include="number").columns
-        if len(num_cols) > 0:
-            df = df.rename(columns={num_cols[0]: "涨跌幅%"})
-
-    df["涨跌幅%"] = pd.to_numeric(df.get("涨跌幅%", 0), errors="coerce").fillna(0)
+    df = pd.DataFrame(items).rename(columns={
+        "f14": "行业板块", "f3": "涨跌幅%",
+        "f104": "上涨家数", "f105": "下跌家数",
+    })
+    df["涨跌幅%"] = pd.to_numeric(df["涨跌幅%"], errors="coerce").fillna(0)
 
     # 分类
     def classify(v):
