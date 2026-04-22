@@ -89,41 +89,26 @@ def is_auction_time() -> bool:
 
 # ---- 数据获取 ----
 
-def _fetch_industry_df(timeout=30):
-    """带超时的 akshare 行业资金流向请求"""
-    import threading
-    result, error = [None], [None]
-    def _run():
-        try:
-            result[0] = ak.stock_fund_flow_industry(symbol="即时")
-        except Exception as e:
-            error[0] = e
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    t.join(timeout)
-    if t.is_alive():
-        raise TimeoutError(f"行业资金流向接口超时（>{timeout}s）")
-    if error[0]:
-        raise error[0]
-    return result[0]
+_EM_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Referer": "https://data.eastmoney.com/",
+}
+_EM_URL = "https://push2.eastmoney.com/api/qt/clist/get"
+_EM_BASE = {
+    "pn": 1, "pz": 200, "po": 1, "np": 1,
+    "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+    "fltt": 2, "invt": 2, "fid": "f62",
+    "fs": "m:90+t:2+f:!50",
+}
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_zt_count() -> dict:
-    """从东方财富行业板块取涨停家数(f124)，返回 {行业名: 涨停数}"""
-    import requests
+    """从东方财富行业板块取涨停家数(f124)"""
     try:
-        url = "https://push2.eastmoney.com/api/qt/clist/get"
-        params = {
-            "pn": 1, "pz": 200, "po": 1, "np": 1,
-            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
-            "fltt": 2, "invt": 2, "fid": "f3",
-            "fs": "m:90+t:2+f:!50",
-            "fields": "f14,f124",
-        }
-        resp = requests.get(url, params=params,
-                            headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        items = resp.json().get("data", {}).get("diff", []) or []
+        params = {**_EM_BASE, "fid": "f3", "fields": "f14,f124"}
+        items = requests.get(_EM_URL, params=params, headers=_EM_HEADERS,
+                             timeout=10).json().get("data", {}).get("diff", []) or []
         return {item["f14"]: int(item.get("f124") or 0)
                 for item in items if item.get("f14")}
     except Exception:
@@ -132,27 +117,35 @@ def fetch_zt_count() -> dict:
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_data():
-    import requests
-    df = _fetch_industry_df(timeout=30)
-    if df is None or len(df) == 0:
+    # 直接请求东方财富，不再依赖 akshare（akshare 在 Streamlit Cloud 会卡死）
+    params = {**_EM_BASE, "fields": "f14,f3,f62,f184,f6,f128,f136,f124"}
+    resp = requests.get(_EM_URL, params=params, headers=_EM_HEADERS, timeout=15)
+    items = resp.json().get("data", {}).get("diff", []) or []
+    if not items:
         raise ValueError("行业数据为空，稍后重试")
-    df = df.rename(columns={
-        "行业": "行业板块",
-        "行业-涨跌幅": "涨跌幅%",
-        "净额": "净流入(亿元)",
-        "流入资金": "流入(亿元)",
-        "流出资金": "流出(亿元)",
-        "领涨股-涨跌幅": "领涨股涨跌幅%",
-    })
-    for col in ["净流入(亿元)", "流入(亿元)", "流出(亿元)", "涨跌幅%"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-    df["成交额(亿元)"] = df["流入(亿元)"].fillna(0) + df["流出(亿元)"].fillna(0)
-    df["净流入率%"] = (df["净流入(亿元)"] / df["成交额(亿元)"].replace(0, float("nan")) * 100).round(2)
 
-    # 合并涨停家数
-    zt_map = fetch_zt_count()
-    df["涨停数"] = df["行业板块"].map(zt_map).fillna(0).astype(int)
+    rows = []
+    for item in items:
+        net = (item.get("f62") or 0) / 1e8          # 净流入(亿元)
+        total = (item.get("f6") or 0) / 1e8         # 成交额(亿元)
+        inflow  = (total + net) / 2
+        outflow = (total - net) / 2
+        rows.append({
+            "行业板块":     item.get("f14", ""),
+            "涨跌幅%":      item.get("f3") or 0,
+            "净流入(亿元)": round(net, 2),
+            "净流入率%":    item.get("f184") or 0,
+            "成交额(亿元)": round(total, 2),
+            "流入(亿元)":   round(inflow, 2),
+            "流出(亿元)":   round(outflow, 2),
+            "领涨股":       item.get("f128", ""),
+            "领涨股涨跌幅%": item.get("f136") or 0,
+            "涨停数":       int(item.get("f124") or 0),
+        })
+
+    df = pd.DataFrame(rows)
+    for col in ["涨跌幅%", "净流入率%", "领涨股涨跌幅%"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
     df = df.sort_values("净流入(亿元)", ascending=False).reset_index(drop=True)
     df.index = df.index + 1
