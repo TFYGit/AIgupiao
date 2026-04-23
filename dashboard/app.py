@@ -104,31 +104,24 @@ _EM_BASE = {
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_zt_count() -> dict:
-    """从全市场股票统计每个同花顺行业的涨停家数"""
-    try:
-        params = {
-            "pn": 1, "pz": 5000, "po": 1, "np": 1,
-            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
-            "fltt": 2, "invt": 2, "fid": "f3",
-            "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
-            "fields": "f3,f100",
-        }
-        items = requests.get(_EM_URL, params=params, headers=_EM_HEADERS,
-                             timeout=15).json().get("data", {}).get("diff", []) or []
-        result: dict = {}
-        for item in items:
-            pct = item.get("f3")
-            ind = item.get("f100", "")
-            if pct is None or not ind or ind == "-":
-                continue
-            try:
-                if float(pct) >= 9.9:
-                    result[ind] = result.get(ind, 0) + 1
-            except (ValueError, TypeError):
-                pass
-        return result
-    except Exception:
+    """用akshare涨停池统计各行业涨停家数"""
+    import threading
+    result, error = [None], [None]
+    def _run():
+        try:
+            today = now_bjt().strftime("%Y%m%d")
+            result[0] = ak.stock_zt_pool_em(date=today)
+        except Exception as e:
+            error[0] = e
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(15)
+    if t.is_alive() or error[0] or result[0] is None or result[0].empty:
         return {}
+    df = result[0]
+    if "所属行业" not in df.columns:
+        return {}
+    return df["所属行业"].value_counts().to_dict()
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
@@ -179,12 +172,18 @@ def fetch_data():
     try:
         hdrs = {"User-Agent": "Mozilla/5.0"}
         secids = ["1.000001", "0.399001", "0.899050"]
-        total = sum(
-            requests.get(f"https://push2.eastmoney.com/api/qt/stock/get?secid={s}&fields=f48",
-                         headers=hdrs, timeout=8).json()["data"]["f48"]
-            for s in secids
-        )
-        turnover = f"{total / 1e8:.0f} 亿元"
+        total = 0
+        for s in secids:
+            try:
+                val = requests.get(
+                    f"https://push2.eastmoney.com/api/qt/stock/get?secid={s}&fields=f48",
+                    headers=hdrs, timeout=8
+                ).json().get("data", {}).get("f48")
+                if isinstance(val, (int, float)) and val > 0:
+                    total += val
+            except Exception:
+                pass
+        turnover = f"{total / 1e8:.0f} 亿元" if total > 0 else "—"
     except Exception:
         turnover = "—"
     updated_at = now_bjt().strftime("%Y-%m-%d %H:%M:%S")
