@@ -168,7 +168,7 @@ def fetch_data():
     zt_map = fetch_zt_count()
     df["涨停数"] = df["行业板块"].map(zt_map).fillna(0).astype(int)
 
-    df = pd.DataFrame(df)
+    df = pd.DataFrame(df).drop_duplicates(subset="行业板块")
     for col in ["涨跌幅%", "净流入率%", "领涨股涨跌幅%"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
