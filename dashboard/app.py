@@ -435,6 +435,7 @@ def show_main_content():
 
 def show_top5_history(current_df: pd.DataFrame):
     """页面底部展示近10日净流入TOP5趋势"""
+    current_df = current_df.drop_duplicates(subset="行业板块")
     today = now_bjt().strftime("%Y-%m-%d")
     history = load_history()
 
