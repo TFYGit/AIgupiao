@@ -480,6 +480,28 @@ def show_top5_history(current_df: pd.DataFrame):
         use_container_width=True,
     )
 
+    # 净流出TOP5
+    bot_industries = current_df.nsmallest(5, "净流入(亿元)")["行业板块"].tolist()
+    bot_rows = []
+    for ind in bot_industries:
+        row = {"行业板块": ind}
+        for d in hist_dates:
+            val = history[d].get(ind)
+            row[d] = val
+        cur = current_df.loc[current_df["行业板块"] == ind, "净流入(亿元)"]
+        row[today_col] = round(float(cur.values[0]), 2) if len(cur) > 0 else None
+        bot_rows.append(row)
+
+    bot_df = pd.DataFrame(bot_rows).set_index("行业板块")
+    bot_df = bot_df[[c for c in [today_col] + hist_cols if c in bot_df.columns]]
+    bot_df["10日合计"] = bot_df.apply(lambda row: round(row.dropna().sum(), 2), axis=1)
+
+    st.subheader("净流出TOP5 · 近10日统计（亿元）")
+    st.dataframe(
+        bot_df.style.format(fmt),
+        use_container_width=True,
+    )
+
 
 # ---- 页面入口 ----
 st.title("📊 行业资金流向 · 实时")
