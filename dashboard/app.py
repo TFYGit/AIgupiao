@@ -104,13 +104,29 @@ _EM_BASE = {
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_zt_count() -> dict:
-    """从东方财富行业板块取涨停家数(f128)"""
+    """从全市场股票统计每个同花顺行业的涨停家数"""
     try:
-        params = {**_EM_BASE, "fid": "f3", "fields": "f14,f128"}
+        params = {
+            "pn": 1, "pz": 5000, "po": 1, "np": 1,
+            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+            "fltt": 2, "invt": 2, "fid": "f3",
+            "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
+            "fields": "f3,f100",
+        }
         items = requests.get(_EM_URL, params=params, headers=_EM_HEADERS,
-                             timeout=10).json().get("data", {}).get("diff", []) or []
-        return {item["f14"]: int(item.get("f128") or 0)
-                for item in items if item.get("f14")}
+                             timeout=15).json().get("data", {}).get("diff", []) or []
+        result: dict = {}
+        for item in items:
+            pct = item.get("f3")
+            ind = item.get("f100", "")
+            if pct is None or not ind or ind == "-":
+                continue
+            try:
+                if float(pct) >= 9.9:
+                    result[ind] = result.get(ind, 0) + 1
+            except (ValueError, TypeError):
+                pass
+        return result
     except Exception:
         return {}
 
