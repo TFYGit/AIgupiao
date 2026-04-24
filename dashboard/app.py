@@ -426,8 +426,12 @@ def show_main_content():
         # 尝试拉新数据，失败时保留缓存
         try:
             new_df, updated_at, turnover = fetch_data()
-            if updated_at != st.session_state.get("last_update"):
-                st.session_state["prev_df"]     = st.session_state.get("last_df")
+            last_df = st.session_state.get("last_df")
+            # 若新数据板块数明显少于上次缓存，视为不完整数据，保留缓存
+            if last_df is not None and len(new_df) < len(last_df) - 2:
+                st.caption(f"⚠️ 新数据板块数({len(new_df)})少于缓存({len(last_df)})，继续使用缓存")
+            elif updated_at != st.session_state.get("last_update"):
+                st.session_state["prev_df"]     = last_df
                 st.session_state["last_df"]     = new_df
                 st.session_state["last_update"] = updated_at
                 st.session_state["turnover"]    = turnover
