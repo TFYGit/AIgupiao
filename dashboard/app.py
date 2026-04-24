@@ -62,16 +62,21 @@ def load_history() -> dict:
         return {}
 
 
-def save_history(df: pd.DataFrame):
+def save_history(df: pd.DataFrame, prev_df: pd.DataFrame = None):
     """把所有板块当天净流入 upsert 到 Supabase"""
     today = now_bjt().strftime("%Y-%m-%d")
     try:
         sb = get_supabase()
-        rows = [
-            {"date": today, "industry": row["行业板块"],
-             "net_inflow": round(float(row["净流入(亿元)"]), 2)}
-            for _, row in df[["行业板块", "净流入(亿元)"]].iterrows()
-        ]
+        prev_map = {}
+        if prev_df is not None and "行业板块" in prev_df.columns:
+            prev_map = prev_df.set_index("行业板块")["净流入(亿元)"].to_dict()
+        rows = []
+        for _, row in df[["行业板块", "净流入(亿元)"]].iterrows():
+            board = row["行业板块"]
+            net   = round(float(row["净流入(亿元)"]), 2)
+            change = round(net - float(prev_map[board]), 2) if board in prev_map else None
+            rows.append({"date": today, "industry": board,
+                         "net_inflow": net, "net_inflow_change": change})
         sb.table("industry_fund_history").upsert(rows, on_conflict="date,industry").execute()
     except Exception:
         pass
@@ -95,16 +100,21 @@ def load_concept_history() -> dict:
         return {}
 
 
-def save_concept_history(df: pd.DataFrame):
+def save_concept_history(df: pd.DataFrame, prev_df: pd.DataFrame = None):
     """把所有概念板块当天净流入 upsert 到 Supabase"""
     today = now_bjt().strftime("%Y-%m-%d")
     try:
         sb = get_supabase()
-        rows = [
-            {"date": today, "industry": row["行业板块"],
-             "net_inflow": round(float(row["净流入(亿元)"]), 2)}
-            for _, row in df[["行业板块", "净流入(亿元)"]].iterrows()
-        ]
+        prev_map = {}
+        if prev_df is not None and "行业板块" in prev_df.columns:
+            prev_map = prev_df.set_index("行业板块")["净流入(亿元)"].to_dict()
+        rows = []
+        for _, row in df[["行业板块", "净流入(亿元)"]].iterrows():
+            board = row["行业板块"]
+            net   = round(float(row["净流入(亿元)"]), 2)
+            change = round(net - float(prev_map[board]), 2) if board in prev_map else None
+            rows.append({"date": today, "industry": board,
+                         "net_inflow": net, "net_inflow_change": change})
         sb.table("concept_fund_history").upsert(rows, on_conflict="date,industry").execute()
     except Exception:
         pass
@@ -520,7 +530,7 @@ def show_main_content():
                         st.session_state["last_update"] = updated_at
                         st.session_state["turnover"]    = turnover
                         if is_open:
-                            save_history(new_df)
+                            save_history(new_df, prev_df=last_df)
                 except Exception as fetch_err:
                     if st.session_state.get("last_df") is None:
                         st.error(f"数据获取失败且无缓存：{fetch_err}")
@@ -556,7 +566,7 @@ def show_main_content():
                     st.session_state["last_concept_df"]     = new_df
                     st.session_state["last_concept_update"] = updated_at
                     if is_open:
-                        save_concept_history(new_df)
+                        save_concept_history(new_df, prev_df=last_df)
             except Exception as fetch_err:
                 if st.session_state.get("last_concept_df") is None:
                     st.error(f"概念数据获取失败且无缓存：{fetch_err}")
