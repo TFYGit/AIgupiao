@@ -67,9 +67,14 @@ def save_history(df: pd.DataFrame, prev_df: pd.DataFrame = None):
     today = now_bjt().strftime("%Y-%m-%d")
     try:
         sb = get_supabase()
-        prev_map = {}
-        if prev_df is not None and "行业板块" in prev_df.columns:
+        # 优先用 DB 中今日已有记录算环比，没有则退回 session state 的 prev_df
+        existing = sb.table("industry_fund_history").select("industry,net_inflow").eq("date", today).execute().data
+        if existing:
+            prev_map = {r["industry"]: r["net_inflow"] for r in existing}
+        elif prev_df is not None and "行业板块" in prev_df.columns:
             prev_map = prev_df.set_index("行业板块")["净流入(亿元)"].to_dict()
+        else:
+            prev_map = {}
         rows = []
         for _, row in df[["行业板块", "净流入(亿元)"]].iterrows():
             board = row["行业板块"]
@@ -105,9 +110,14 @@ def save_concept_history(df: pd.DataFrame, prev_df: pd.DataFrame = None):
     today = now_bjt().strftime("%Y-%m-%d")
     try:
         sb = get_supabase()
-        prev_map = {}
-        if prev_df is not None and "行业板块" in prev_df.columns:
+        # 优先用 DB 中今日已有记录算环比，没有则退回 session state 的 prev_df
+        existing = sb.table("concept_fund_history").select("industry,net_inflow").eq("date", today).execute().data
+        if existing:
+            prev_map = {r["industry"]: r["net_inflow"] for r in existing}
+        elif prev_df is not None and "行业板块" in prev_df.columns:
             prev_map = prev_df.set_index("行业板块")["净流入(亿元)"].to_dict()
+        else:
+            prev_map = {}
         rows = []
         for _, row in df[["行业板块", "净流入(亿元)"]].iterrows():
             board = row["行业板块"]
