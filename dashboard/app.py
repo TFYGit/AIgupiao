@@ -130,6 +130,19 @@ def save_concept_history(df: pd.DataFrame, prev_df: pd.DataFrame = None):
         pass
 
 
+def init_prev_from_db(table_name: str) -> "pd.DataFrame | None":
+    """页面首次加载时，从 DB 读今日已有记录作为环比基准"""
+    try:
+        sb = get_supabase()
+        today = now_bjt().strftime("%Y-%m-%d")
+        rows = sb.table(table_name).select("industry,net_inflow").eq("date", today).execute().data
+        if not rows:
+            return None
+        return pd.DataFrame(rows).rename(columns={"industry": "行业板块", "net_inflow": "净流入(亿元)"})
+    except Exception:
+        return None
+
+
 def is_market_open() -> bool:
     t = (now_bjt().hour, now_bjt().minute)
     return MARKET_OPEN <= t <= MARKET_CLOSE
@@ -557,7 +570,11 @@ def show_main_content():
                 if df is None:
                     st.warning("暂无行业板块数据")
                 else:
-                    prev_df    = st.session_state.get("prev_df")
+                    prev_df = st.session_state.get("prev_df")
+                    if prev_df is None:
+                        prev_df = init_prev_from_db("industry_fund_history")
+                        if prev_df is not None:
+                            st.session_state["prev_df"] = prev_df
                     updated_at = st.session_state.get("last_update", "—")
                     turnover   = st.session_state.get("turnover", "—")
                     render_fund_flow(df, updated_at, is_open, prev_df, turnover)
@@ -593,7 +610,11 @@ def show_main_content():
             if df is None:
                 st.warning("暂无概念板块数据")
             else:
-                prev_df    = st.session_state.get("prev_concept_df")
+                prev_df = st.session_state.get("prev_concept_df")
+                if prev_df is None:
+                    prev_df = init_prev_from_db("concept_fund_history")
+                    if prev_df is not None:
+                        st.session_state["prev_concept_df"] = prev_df
                 updated_at = st.session_state.get("last_concept_update", "—")
                 turnover   = st.session_state.get("turnover", "—")
                 render_fund_flow(df, updated_at, is_open, prev_df, turnover)
