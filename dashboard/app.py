@@ -154,8 +154,8 @@ def fetch_data():
     })
     for col in ["净流入(亿元)", "流入(亿元)", "流出(亿元)", "涨跌幅%"]:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-    df["成交额(亿元)"] = df["流入(亿元)"].fillna(0) + df["流出(亿元)"].fillna(0)
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+    df["成交额(亿元)"] = df["流入(亿元)"] + df["流出(亿元)"]
     df["净流入率%"] = (df["净流入(亿元)"] / df["成交额(亿元)"].replace(0, float("nan")) * 100).round(2)
 
     zt_map = fetch_zt_count()
@@ -350,8 +350,9 @@ def render_auction(df):
 
 def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—"):
     col1, col2, col3, col4 = st.columns(4)
-    inflow_count  = (df["净流入(亿元)"] > 0).sum()
-    outflow_count = (df["净流入(亿元)"] < 0).sum()
+    inflow_count  = int((df["净流入(亿元)"] > 0).sum())
+    outflow_count = int((df["净流入(亿元)"] < 0).sum())
+    total_count   = len(df)
     top_industry  = df.iloc[0]["行业板块"] if not df.empty else "—"
 
     # 环比delta
@@ -360,7 +361,7 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—"):
         d_inflow  = int(inflow_count)  - int((prev_df["净流入(亿元)"] > 0).sum())
         d_outflow = int(outflow_count) - int((prev_df["净流入(亿元)"] < 0).sum())
 
-    col1.metric("流入行业数", f"{inflow_count} 个",
+    col1.metric(f"流入行业数（共{total_count}个）", f"{inflow_count} 个",
                 delta=f"{d_inflow:+d} 个" if d_inflow is not None else None)
     col2.metric("流出行业数", f"{outflow_count} 个",
                 delta=f"{d_outflow:+d} 个" if d_outflow is not None else None,
