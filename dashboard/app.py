@@ -267,7 +267,7 @@ def fetch_concept_data():
             error[0] = e
     t = threading.Thread(target=_run, daemon=True)
     t.start()
-    t.join(60)
+    t.join(90)
     if t.is_alive():
         raise TimeoutError("概念板块资金流向接口超时，稍后重试")
     if error[0]:
@@ -536,6 +536,8 @@ def show_main_content():
 
     # ── 行业板块 Tab ──────────────────────────────────────────
     with tab_industry:
+        if "prev_df" not in st.session_state:
+            st.session_state["prev_df"] = init_prev_from_db("industry_fund_history")
         if is_auction:
             try:
                 df = fetch_auction_data()
@@ -570,11 +572,7 @@ def show_main_content():
                 if df is None:
                     st.warning("暂无行业板块数据")
                 else:
-                    prev_df = st.session_state.get("prev_df")
-                    if prev_df is None:
-                        prev_df = init_prev_from_db("industry_fund_history")
-                        if prev_df is not None:
-                            st.session_state["prev_df"] = prev_df
+                    prev_df    = st.session_state.get("prev_df")
                     updated_at = st.session_state.get("last_update", "—")
                     turnover   = st.session_state.get("turnover", "—")
                     render_fund_flow(df, updated_at, is_open, prev_df, turnover)
@@ -584,6 +582,8 @@ def show_main_content():
 
     # ── 概念板块 Tab ──────────────────────────────────────────
     with tab_concept:
+        if "prev_concept_df" not in st.session_state:
+            st.session_state["prev_concept_df"] = init_prev_from_db("concept_fund_history")
         try:
             try:
                 new_df, updated_at = fetch_concept_data()
@@ -610,11 +610,7 @@ def show_main_content():
             if df is None:
                 st.warning("暂无概念板块数据")
             else:
-                prev_df = st.session_state.get("prev_concept_df")
-                if prev_df is None:
-                    prev_df = init_prev_from_db("concept_fund_history")
-                    if prev_df is not None:
-                        st.session_state["prev_concept_df"] = prev_df
+                prev_df    = st.session_state.get("prev_concept_df")
                 updated_at = st.session_state.get("last_concept_update", "—")
                 turnover   = st.session_state.get("turnover", "—")
                 render_fund_flow(df, updated_at, is_open, prev_df, turnover)
