@@ -68,23 +68,22 @@ def save_history(df: pd.DataFrame, prev_df: pd.DataFrame = None):
     try:
         sb = get_supabase()
         # 优先用 DB 中今日已有记录算环比，没有则退回 session state 的 prev_df
-        existing = sb.table("industry_fund_history").select("industry,net_inflow").eq("date", today).execute().data
-        if existing:
-            prev_map = {r["industry"]: r["net_inflow"] for r in existing}
-        elif prev_df is not None and "行业板块" in prev_df.columns:
-            prev_map = prev_df.set_index("行业板块")["净流入(亿元)"].to_dict()
-        else:
-            prev_map = {}
+        existing = sb.table("industry_fund_history").select("industry,net_inflow").eq("date", today).execute().data or []
+        prev_map = {r["industry"]: float(r["net_inflow"]) for r in existing if r.get("net_inflow") is not None}
+        if not prev_map and prev_df is not None and "行业板块" in prev_df.columns:
+            prev_map = {str(k): float(v) for k, v in prev_df.set_index("行业板块")["净流入(亿元)"].items()
+                        if v is not None and not pd.isna(v)}
         rows = []
         for _, row in df[["行业板块", "净流入(亿元)"]].iterrows():
-            board = row["行业板块"]
+            board = str(row["行业板块"])
             net   = round(float(row["净流入(亿元)"]), 2)
-            change = round(net - float(prev_map[board]), 2) if board in prev_map else None
+            prev_val = prev_map.get(board)
+            change = round(net - prev_val, 2) if prev_val is not None else None
             rows.append({"date": today, "industry": board,
                          "net_inflow": net, "net_inflow_change": change})
         sb.table("industry_fund_history").upsert(rows, on_conflict="date,industry").execute()
-    except Exception:
-        pass
+    except Exception as e:
+        st.session_state["_save_industry_err"] = str(e)[:200]
 
 
 def load_concept_history() -> dict:
@@ -111,23 +110,22 @@ def save_concept_history(df: pd.DataFrame, prev_df: pd.DataFrame = None):
     try:
         sb = get_supabase()
         # 优先用 DB 中今日已有记录算环比，没有则退回 session state 的 prev_df
-        existing = sb.table("concept_fund_history").select("industry,net_inflow").eq("date", today).execute().data
-        if existing:
-            prev_map = {r["industry"]: r["net_inflow"] for r in existing}
-        elif prev_df is not None and "行业板块" in prev_df.columns:
-            prev_map = prev_df.set_index("行业板块")["净流入(亿元)"].to_dict()
-        else:
-            prev_map = {}
+        existing = sb.table("concept_fund_history").select("industry,net_inflow").eq("date", today).execute().data or []
+        prev_map = {r["industry"]: float(r["net_inflow"]) for r in existing if r.get("net_inflow") is not None}
+        if not prev_map and prev_df is not None and "行业板块" in prev_df.columns:
+            prev_map = {str(k): float(v) for k, v in prev_df.set_index("行业板块")["净流入(亿元)"].items()
+                        if v is not None and not pd.isna(v)}
         rows = []
         for _, row in df[["行业板块", "净流入(亿元)"]].iterrows():
-            board = row["行业板块"]
+            board = str(row["行业板块"])
             net   = round(float(row["净流入(亿元)"]), 2)
-            change = round(net - float(prev_map[board]), 2) if board in prev_map else None
+            prev_val = prev_map.get(board)
+            change = round(net - prev_val, 2) if prev_val is not None else None
             rows.append({"date": today, "industry": board,
                          "net_inflow": net, "net_inflow_change": change})
         sb.table("concept_fund_history").upsert(rows, on_conflict="date,industry").execute()
-    except Exception:
-        pass
+    except Exception as e:
+        st.session_state["_save_concept_err"] = str(e)[:200]
 
 
 def init_prev_from_db(table_name: str) -> "pd.DataFrame | None":
@@ -716,3 +714,8 @@ def show_top5_history(current_df: pd.DataFrame, load_fn=None):
 # ---- 页面入口 ----
 st.title("📊 板块资金流向 · 实时")
 show_main_content()
+
+# 存库错误提示（调试用，正常运行时不会出现）
+for _key, _label in [("_save_industry_err", "行业存库"), ("_save_concept_err", "概念存库")]:
+    if st.session_state.get(_key):
+        st.error(f"[{_label}错误] {st.session_state[_key]}")
