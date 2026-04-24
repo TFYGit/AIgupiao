@@ -24,7 +24,7 @@ st.set_page_config(
     layout="wide",
 )
 
-REFRESH_INTERVAL = 300       # 5分钟
+REFRESH_INTERVAL = 180       # 3分钟
 AUCTION_INTERVAL = 60        # 集合竞价1分钟刷新
 MARKET_OPEN   = (9,  0)
 AUCTION_START = (9, 15)
