@@ -440,25 +440,39 @@ def render_auction(df):
 
 
 def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—"):
-    col1, col2, col3, col4 = st.columns(4)
+    # 提前计算环比，供 metric 和表格共用
+    show_df = df.copy()
+    if prev_df is not None and "行业板块" in prev_df.columns:
+        prev_map = prev_df.set_index("行业板块")["净流入(亿元)"].to_dict()
+        show_df["环比(亿元)"] = show_df["行业板块"].map(
+            lambda x: show_df.loc[show_df["行业板块"] == x, "净流入(亿元)"].values[0] - prev_map.get(x, float("nan"))
+            if x in prev_map else float("nan")
+        )
+        qob_up   = int((show_df["环比(亿元)"] > 0).sum())
+        qob_down = int((show_df["环比(亿元)"] < 0).sum())
+    else:
+        qob_up = qob_down = None
+
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     inflow_count  = int((df["净流入(亿元)"] > 0).sum())
     outflow_count = int((df["净流入(亿元)"] < 0).sum())
     total_count   = len(df)
     top_industry  = df.iloc[0]["行业板块"] if not df.empty else "—"
 
-    # 环比delta
     d_inflow = d_outflow = None
     if prev_df is not None:
         d_inflow  = int(inflow_count)  - int((prev_df["净流入(亿元)"] > 0).sum())
         d_outflow = int(outflow_count) - int((prev_df["净流入(亿元)"] < 0).sum())
 
-    col1.metric(f"流入行业数（共{total_count}个）", f"{inflow_count} 个",
+    col1.metric(f"流入板块数（共{total_count}个）", f"{inflow_count} 个",
                 delta=f"{d_inflow:+d} 个" if d_inflow is not None else None)
-    col2.metric("流出行业数", f"{outflow_count} 个",
+    col2.metric("流出板块数", f"{outflow_count} 个",
                 delta=f"{d_outflow:+d} 个" if d_outflow is not None else None,
                 delta_color="inverse")
-    col3.metric("今日市场成交额总计", turnover)
-    col4.metric("最强行业", top_industry)
+    col3.metric("环比上升板块", f"{qob_up} 个" if qob_up is not None else "—")
+    col4.metric("环比下降板块", f"{qob_down} 个" if qob_down is not None else "—", delta_color="off")
+    col5.metric("今日市场成交额总计", turnover)
+    col6.metric("最强板块", top_industry)
 
     if is_open:
         st.caption(f"最后更新：{updated_at}　　每 {REFRESH_INTERVAL // 60} 分钟自动刷新")
@@ -467,15 +481,7 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—"):
 
     st.plotly_chart(build_fund_flow_chart(df), use_container_width=True)
 
-    # 表格加净流入环比列
     st.subheader("详细数据")
-    show_df = df.copy()
-    if prev_df is not None:
-        prev_map = prev_df.set_index("行业板块")["净流入(亿元)"].to_dict() if "行业板块" in prev_df.columns else {}
-        show_df["环比(亿元)"] = show_df["行业板块"].map(
-            lambda x: show_df.loc[show_df["行业板块"] == x, "净流入(亿元)"].values[0] - prev_map.get(x, float("nan"))
-            if x in prev_map else float("nan")
-        )
 
     display_cols = [c for c in [
         "行业板块", "涨跌幅%", "成交额(亿元)", "净流入(亿元)", "净流入率%", "环比(亿元)",
