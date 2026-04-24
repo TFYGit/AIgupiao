@@ -192,40 +192,60 @@ def fetch_data():
 
 @st.cache_data(ttl=AUCTION_INTERVAL)
 def fetch_auction_data():
-    """集合竞价期间：直接请求东方财富行业板块行情"""
-    import requests
-    url = "https://push2.eastmoney.com/api/qt/clist/get"
-    params = {
-        "pn": 1, "pz": 200, "po": 1, "np": 1,
-        "ut": "bd1d9ddb04089700cf9c27f6f7426281",
-        "fltt": 2, "invt": 2, "fid": "f3",
-        "fs": "m:90+t:2+f:!50",
-        "fields": "f14,f3,f104,f105",
-    }
-    resp = requests.get(url, params=params,
-                        headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
-    items = resp.json().get("data", {}).get("diff", []) or []
-    if not items:
-        raise ValueError("集合竞价数据为空")
+    """集合竞价期间：优先用akshare同花顺行业数据，失败则回退东方财富API"""
+    import threading
 
-    df = pd.DataFrame(items).rename(columns={
-        "f14": "行业板块", "f3": "涨跌幅%",
-        "f104": "上涨家数", "f105": "下跌家数",
-    })
-    df["涨跌幅%"] = pd.to_numeric(df["涨跌幅%"], errors="coerce").fillna(0)
+    df = None
+    # 优先 akshare（与主交易数据源一致，确保行业名相同）
+    ak_result, ak_err = [None], [None]
+    def _run_ak():
+        try:
+            ak_result[0] = ak.stock_fund_flow_industry(symbol="即时")
+        except Exception as e:
+            ak_err[0] = e
+    t = threading.Thread(target=_run_ak, daemon=True)
+    t.start()
+    t.join(20)
 
-    # 分类
+    if not t.is_alive() and ak_result[0] is not None and not ak_result[0].empty:
+        df = ak_result[0].rename(columns={
+            "行业": "行业板块",
+            "行业-涨跌幅": "涨跌幅%",
+        })
+        df["涨跌幅%"] = pd.to_numeric(df.get("涨跌幅%", 0), errors="coerce").fillna(0)
+        for col in ["上涨家数", "下跌家数"]:
+            if col not in df.columns:
+                df[col] = 0
+
+    # 回退：东方财富直接接口
+    if df is None or df.empty:
+        url = "https://push2.eastmoney.com/api/qt/clist/get"
+        params = {
+            "pn": 1, "pz": 200, "po": 1, "np": 1,
+            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+            "fltt": 2, "invt": 2, "fid": "f3",
+            "fs": "m:90+t:2+f:!50",
+            "fields": "f14,f3,f104,f105",
+        }
+        resp = requests.get(url, params=params,
+                            headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        items = resp.json().get("data", {}).get("diff", []) or []
+        if not items:
+            raise ValueError("集合竞价数据为空")
+        df = pd.DataFrame(items).rename(columns={
+            "f14": "行业板块", "f3": "涨跌幅%",
+            "f104": "上涨家数", "f105": "下跌家数",
+        })
+        df["涨跌幅%"] = pd.to_numeric(df["涨跌幅%"], errors="coerce").fillna(0)
+
+    df = df.drop_duplicates(subset="行业板块")
+
     def classify(v):
-        if v >= 1.0:
-            return "高开(≥1%)"
-        elif v <= -1.0:
-            return "低开(≤-1%)"
-        elif v > 0:
-            return "小幅高开"
-        elif v < 0:
-            return "小幅低开"
-        else:
-            return "平开"
+        if v >= 1.0:   return "高开(≥1%)"
+        elif v <= -1.0: return "低开(≤-1%)"
+        elif v > 0:    return "小幅高开"
+        elif v < 0:    return "小幅低开"
+        else:          return "平开"
 
     df["开盘状态"] = df["涨跌幅%"].apply(classify)
     df = df.sort_values("涨跌幅%", ascending=False).reset_index(drop=True)
