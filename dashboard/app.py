@@ -234,7 +234,7 @@ def fetch_concept_data():
             error[0] = e
     t = threading.Thread(target=_run, daemon=True)
     t.start()
-    t.join(30)
+    t.join(60)
     if t.is_alive():
         raise TimeoutError("概念板块资金流向接口超时，稍后重试")
     if error[0]:
