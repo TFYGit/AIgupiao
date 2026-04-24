@@ -369,7 +369,7 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—"):
     col4.metric("最强行业", top_industry)
 
     if is_open:
-        st.caption(f"最后更新：{updated_at}　　每 5 分钟自动刷新")
+        st.caption(f"最后更新：{updated_at}　　每 {REFRESH_INTERVAL // 60} 分钟自动刷新")
     else:
         st.caption(f"数据截止：{updated_at}　　非交易时段（09:00-15:30），已停止刷新")
 
