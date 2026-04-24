@@ -508,9 +508,13 @@ def show_main_content():
                 try:
                     new_df, updated_at, turnover = fetch_data()
                     last_df = st.session_state.get("last_df")
-                    if last_df is not None and len(new_df) < len(last_df) - 2:
-                        st.caption(f"⚠️ 新数据板块数({len(new_df)})少于缓存({len(last_df)})，继续使用缓存")
-                    elif updated_at != st.session_state.get("last_update"):
+                    orig_len = len(new_df)
+                    if last_df is not None and orig_len < len(last_df) - 2:
+                        missing = last_df[~last_df["行业板块"].isin(new_df["行业板块"])]
+                        new_df = pd.concat([new_df, missing]).sort_values("净流入(亿元)", ascending=False).reset_index(drop=True)
+                        new_df.index += 1
+                        st.caption(f"ℹ️ 新数据 {orig_len} 个板块，缺失 {len(missing)} 个已从缓存补全")
+                    if updated_at != st.session_state.get("last_update"):
                         st.session_state["prev_df"]     = last_df
                         st.session_state["last_df"]     = new_df
                         st.session_state["last_update"] = updated_at
@@ -541,9 +545,13 @@ def show_main_content():
             try:
                 new_df, updated_at = fetch_concept_data()
                 last_df = st.session_state.get("last_concept_df")
-                if last_df is not None and len(new_df) < len(last_df) - 2:
-                    st.caption(f"⚠️ 新数据板块数({len(new_df)})少于缓存({len(last_df)})，继续使用缓存")
-                elif updated_at != st.session_state.get("last_concept_update"):
+                orig_len = len(new_df)
+                if last_df is not None and orig_len < len(last_df) - 2:
+                    missing = last_df[~last_df["行业板块"].isin(new_df["行业板块"])]
+                    new_df = pd.concat([new_df, missing]).sort_values("净流入(亿元)", ascending=False).reset_index(drop=True)
+                    new_df.index += 1
+                    st.caption(f"ℹ️ 新数据 {orig_len} 个板块，缺失 {len(missing)} 个已从缓存补全")
+                if updated_at != st.session_state.get("last_concept_update"):
                     st.session_state["prev_concept_df"]     = last_df
                     st.session_state["last_concept_df"]     = new_df
                     st.session_state["last_concept_update"] = updated_at
