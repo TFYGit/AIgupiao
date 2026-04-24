@@ -77,6 +77,39 @@ def save_history(df: pd.DataFrame):
         pass
 
 
+def load_concept_history() -> dict:
+    """从 Supabase 加载近10个交易日所有概念板块数据，格式: {日期: {概念: 净流入}}"""
+    try:
+        sb = get_supabase()
+        rows = (sb.table("concept_fund_history")
+                  .select("date,industry,net_inflow")
+                  .order("date", desc=False)
+                  .execute().data)
+        history = {}
+        for r in rows:
+            d = str(r["date"])
+            history.setdefault(d, {})[r["industry"]] = r["net_inflow"]
+        dates = sorted(history.keys())[-10:]
+        return {d: history[d] for d in dates}
+    except Exception:
+        return {}
+
+
+def save_concept_history(df: pd.DataFrame):
+    """把所有概念板块当天净流入 upsert 到 Supabase"""
+    today = now_bjt().strftime("%Y-%m-%d")
+    try:
+        sb = get_supabase()
+        rows = [
+            {"date": today, "industry": row["行业板块"],
+             "net_inflow": round(float(row["净流入(亿元)"]), 2)}
+            for _, row in df[["行业板块", "净流入(亿元)"]].iterrows()
+        ]
+        sb.table("concept_fund_history").upsert(rows, on_conflict="date,industry").execute()
+    except Exception:
+        pass
+
+
 def is_market_open() -> bool:
     t = (now_bjt().hour, now_bjt().minute)
     return MARKET_OPEN <= t <= MARKET_CLOSE
@@ -188,6 +221,54 @@ def fetch_data():
         turnover = "—"
     updated_at = now_bjt().strftime("%Y-%m-%d %H:%M:%S")
     return df, updated_at, turnover
+
+
+@st.cache_data(ttl=REFRESH_INTERVAL)
+def fetch_concept_data():
+    import threading
+    result, error = [None], [None]
+    def _run():
+        try:
+            result[0] = ak.stock_fund_flow_concept(symbol="即时")
+        except Exception as e:
+            error[0] = e
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(30)
+    if t.is_alive():
+        raise TimeoutError("概念板块资金流向接口超时，稍后重试")
+    if error[0]:
+        raise error[0]
+    df = result[0]
+    if df is None or df.empty:
+        raise ValueError("概念板块数据为空，稍后重试")
+
+    # 兼容 akshare 返回的列名（行业/概念/板块名称 三选一）
+    for col_name in ["行业", "概念", "板块名称"]:
+        if col_name in df.columns and "行业板块" not in df.columns:
+            df = df.rename(columns={col_name: "行业板块"})
+            break
+
+    df = df.rename(columns={
+        "行业-涨跌幅": "涨跌幅%",
+        "净额":        "净流入(亿元)",
+        "流入资金":    "流入(亿元)",
+        "流出资金":    "流出(亿元)",
+        "领涨股-涨跌幅": "领涨股涨跌幅%",
+    })
+    for col in ["净流入(亿元)", "流入(亿元)", "流出(亿元)", "涨跌幅%"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+    df["成交额(亿元)"] = df["流入(亿元)"] + df["流出(亿元)"]
+    df["净流入率%"] = (df["净流入(亿元)"] / df["成交额(亿元)"].replace(0, float("nan")) * 100).round(2)
+    df = df.drop_duplicates(subset="行业板块")
+    for col in ["涨跌幅%", "净流入率%", "领涨股涨跌幅%"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.sort_values("净流入(亿元)", ascending=False).reset_index(drop=True)
+    df.index = df.index + 1
+    updated_at = now_bjt().strftime("%Y-%m-%d %H:%M:%S")
+    return df, updated_at
 
 
 @st.cache_data(ttl=AUCTION_INTERVAL)
@@ -412,56 +493,86 @@ def show_main_content():
     is_open    = is_market_open()
     is_auction = is_auction_time()
 
-    # 集合竞价时段
-    if is_auction:
+    tab_industry, tab_concept = st.tabs(["📈 行业板块", "💡 概念板块"])
+
+    # ── 行业板块 Tab ──────────────────────────────────────────
+    with tab_industry:
+        if is_auction:
+            try:
+                df = fetch_auction_data()
+                render_auction(df)
+            except Exception as e:
+                st.error(f"竞价数据获取失败：{e}")
+        else:
+            try:
+                try:
+                    new_df, updated_at, turnover = fetch_data()
+                    last_df = st.session_state.get("last_df")
+                    if last_df is not None and len(new_df) < len(last_df) - 2:
+                        st.caption(f"⚠️ 新数据板块数({len(new_df)})少于缓存({len(last_df)})，继续使用缓存")
+                    elif updated_at != st.session_state.get("last_update"):
+                        st.session_state["prev_df"]     = last_df
+                        st.session_state["last_df"]     = new_df
+                        st.session_state["last_update"] = updated_at
+                        st.session_state["turnover"]    = turnover
+                        if is_open:
+                            save_history(new_df)
+                except Exception as fetch_err:
+                    if st.session_state.get("last_df") is None:
+                        st.error(f"数据获取失败且无缓存：{fetch_err}")
+                    else:
+                        st.caption(f"⚠️ 数据刷新失败（{fetch_err}），显示上次缓存")
+
+                df = st.session_state.get("last_df")
+                if df is None:
+                    st.warning("暂无行业板块数据")
+                else:
+                    prev_df    = st.session_state.get("prev_df")
+                    updated_at = st.session_state.get("last_update", "—")
+                    turnover   = st.session_state.get("turnover", "—")
+                    render_fund_flow(df, updated_at, is_open, prev_df, turnover)
+                    show_top5_history(df)
+            except Exception as e:
+                st.error(f"数据获取失败：{e}")
+
+    # ── 概念板块 Tab ──────────────────────────────────────────
+    with tab_concept:
         try:
-            df = fetch_auction_data()
-            render_auction(df)
+            try:
+                new_df, updated_at = fetch_concept_data()
+                last_df = st.session_state.get("last_concept_df")
+                if last_df is not None and len(new_df) < len(last_df) - 2:
+                    st.caption(f"⚠️ 新数据板块数({len(new_df)})少于缓存({len(last_df)})，继续使用缓存")
+                elif updated_at != st.session_state.get("last_concept_update"):
+                    st.session_state["prev_concept_df"]     = last_df
+                    st.session_state["last_concept_df"]     = new_df
+                    st.session_state["last_concept_update"] = updated_at
+                    if is_open:
+                        save_concept_history(new_df)
+            except Exception as fetch_err:
+                if st.session_state.get("last_concept_df") is None:
+                    st.error(f"概念数据获取失败且无缓存：{fetch_err}")
+                else:
+                    st.caption(f"⚠️ 概念数据刷新失败（{fetch_err}），显示上次缓存")
+
+            df = st.session_state.get("last_concept_df")
+            if df is None:
+                st.warning("暂无概念板块数据")
+            else:
+                prev_df    = st.session_state.get("prev_concept_df")
+                updated_at = st.session_state.get("last_concept_update", "—")
+                turnover   = st.session_state.get("turnover", "—")
+                render_fund_flow(df, updated_at, is_open, prev_df, turnover)
+                show_top5_history(df, load_fn=load_concept_history)
         except Exception as e:
-            st.error(f"竞价数据获取失败：{e}")
-        return
-
-    # 正常交易/收盘展示资金流向
-    try:
-        # 尝试拉新数据，失败时保留缓存
-        try:
-            new_df, updated_at, turnover = fetch_data()
-            last_df = st.session_state.get("last_df")
-            # 若新数据板块数明显少于上次缓存，视为不完整数据，保留缓存
-            if last_df is not None and len(new_df) < len(last_df) - 2:
-                st.caption(f"⚠️ 新数据板块数({len(new_df)})少于缓存({len(last_df)})，继续使用缓存")
-            elif updated_at != st.session_state.get("last_update"):
-                st.session_state["prev_df"]     = last_df
-                st.session_state["last_df"]     = new_df
-                st.session_state["last_update"] = updated_at
-                st.session_state["turnover"]    = turnover
-                if is_open:
-                    save_history(new_df)
-        except Exception as fetch_err:
-            if st.session_state.get("last_df") is None:
-                st.error(f"数据获取失败且无缓存：{fetch_err}")
-                return
-            st.caption(f"⚠️ 数据刷新失败（{fetch_err}），显示上次缓存")
-
-        df       = st.session_state["last_df"]
-        turnover = st.session_state.get("turnover", "—")
-
-        if df is None:
-            st.warning("暂无数据")
-        prev_df    = st.session_state.get("prev_df")
-        updated_at = st.session_state.get("last_update", "—")
-        render_fund_flow(df, updated_at, is_open, prev_df, turnover)
-        show_top5_history(df)
-
-    except Exception as e:
-        st.error(f"数据获取失败：{e}")
+            st.error(f"概念数据获取失败：{e}")
 
 
-def show_top5_history(current_df: pd.DataFrame):
+def show_top5_history(current_df: pd.DataFrame, load_fn=None):
     """页面底部展示近10日净流入TOP5趋势"""
     current_df = current_df.drop_duplicates(subset="行业板块")
     today = now_bjt().strftime("%Y-%m-%d")
-    history = load_history()
+    history = (load_fn or load_history)()
 
     # 今日TOP5行业
     industries = current_df.nlargest(5, "净流入(亿元)")["行业板块"].tolist()
@@ -552,5 +663,5 @@ def show_top5_history(current_df: pd.DataFrame):
 
 
 # ---- 页面入口 ----
-st.title("📊 行业资金流向 · 实时")
+st.title("📊 板块资金流向 · 实时")
 show_main_content()
