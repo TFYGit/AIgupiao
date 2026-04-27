@@ -141,6 +141,57 @@ def init_prev_from_db(table_name: str) -> "pd.DataFrame | None":
         return None
 
 
+def save_lhb_history(df: pd.DataFrame):
+    """把龙虎榜数据 upsert 到 Supabase（以上榜日为准）"""
+    try:
+        sb = get_supabase()
+        rows = []
+        for _, row in df.iterrows():
+            def _f(col):
+                v = row.get(col)
+                return float(v) if v is not None and not (isinstance(v, float) and pd.isna(v)) else None
+            rows.append({
+                "date":          str(row.get("上榜日", ""))[:10],
+                "code":          str(row.get("代码", "")),
+                "name":          str(row.get("名称", "")),
+                "reason":        str(row.get("上榜原因", "")),
+                "change_pct":    _f("涨跌幅"),
+                "net_buy":       _f("龙虎榜净买额"),
+                "buy_amount":    _f("龙虎榜买入额"),
+                "sell_amount":   _f("龙虎榜卖出额"),
+                "turnover":      _f("换手率"),
+                "net_buy_ratio": _f("净买额占总成交比"),
+            })
+        if rows:
+            sb.table("lhb_history").upsert(rows, on_conflict="date,code,reason").execute()
+    except Exception as e:
+        st.session_state["_save_lhb_err"] = str(e)[:200]
+
+
+@st.cache_data(ttl=REFRESH_INTERVAL)
+def load_lhb_history() -> pd.DataFrame:
+    """从 Supabase 加载近30日龙虎榜数据"""
+    try:
+        from datetime import date, timedelta
+        sb = get_supabase()
+        start = (date.today() - timedelta(days=30)).strftime("%Y-%m-%d")
+        rows = (sb.table("lhb_history")
+                  .select("date,code,name,reason,change_pct,net_buy,buy_amount,sell_amount,turnover,net_buy_ratio")
+                  .gte("date", start)
+                  .order("date", desc=True)
+                  .execute().data)
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame(rows).rename(columns={
+            "date": "上榜日", "code": "代码", "name": "名称", "reason": "上榜原因",
+            "change_pct": "涨跌幅", "net_buy": "龙虎榜净买额",
+            "buy_amount": "龙虎榜买入额", "sell_amount": "龙虎榜卖出额",
+            "turnover": "换手率", "net_buy_ratio": "净买额占总成交比",
+        })
+    except Exception:
+        return pd.DataFrame()
+
+
 def load_zt_dt_history() -> pd.DataFrame:
     """从 Supabase 加载近10个交易日涨停/跌停数"""
     try:
@@ -732,56 +783,55 @@ def show_main_content():
             st.error(f"龙虎榜数据获取失败：{e}")
             lhb_df = None
 
-        if lhb_df is not None:
-            # 顶部指标
-            total_stocks  = lhb_df["代码"].nunique()
-            total_net_buy = lhb_df.groupby("代码")["龙虎榜净买额"].sum()
-            net_inflow_top = total_net_buy.idxmax() if not total_net_buy.empty else "—"
-            net_inflow_top_name = lhb_df.loc[lhb_df["代码"] == net_inflow_top, "名称"].iloc[0] if net_inflow_top != "—" else "—"
+        lhb_fmt = {
+            "涨跌幅":           "{:+.2f}%",
+            "换手率":           "{:.2f}%",
+            "龙虎榜净买额":     "{:+.2f}",
+            "龙虎榜买入额":     "{:.2f}",
+            "龙虎榜卖出额":     "{:.2f}",
+            "净买额占总成交比": "{:.2f}%",
+            "成交额占总成交比": "{:.2f}%",
+        }
 
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("今日上榜股票数", f"{total_stocks} 只")
-            c2.metric("上榜记录数", f"{len(lhb_df)} 条")
-            c3.metric("净买入最强", f"{net_inflow_top_name}({net_inflow_top})")
-            c4.metric("数据时间", lhb_updated)
+        sub_today, sub_history = st.tabs(["📅 今日", "📂 历史记录（近30日）"])
 
-            st.caption("同一股票可能因多个原因多次上榜，每条原因单独一行")
+        # ── 今日子Tab ─────────────────────────────────────────
+        with sub_today:
+            if lhb_df is not None:
+                # 今日数据存库（每日只存一次）
+                today_str = now_bjt().strftime("%Y-%m-%d")
+                if st.session_state.get("lhb_saved_date") != today_str:
+                    save_lhb_history(lhb_df)
+                    st.session_state["lhb_saved_date"] = today_str
 
-            # 主表格
-            show_cols = ["代码", "名称", "上榜原因", "涨跌幅", "龙虎榜净买额",
-                         "龙虎榜买入额", "龙虎榜卖出额", "换手率",
-                         "净买额占总成交比", "成交额占总成交比"]
-            show_cols = [c for c in show_cols if c in lhb_df.columns]
-            fmt = {
-                "涨跌幅":         "{:+.2f}%",
-                "换手率":         "{:.2f}%",
-                "龙虎榜净买额":   "{:+.2f}",
-                "龙虎榜买入额":   "{:.2f}",
-                "龙虎榜卖出额":   "{:.2f}",
-                "净买额占总成交比": "{:.2f}%",
-                "成交额占总成交比": "{:.2f}%",
-            }
-            st.subheader("今日龙虎榜明细（净买额单位：亿元）")
-            all_reasons = sorted(lhb_df["上榜原因"].dropna().unique().tolist())
-            selected_reasons = st.multiselect(
-                "筛选上榜原因（不选则显示全部）",
-                options=all_reasons,
-                default=[],
-            )
-            filtered_lhb = lhb_df if not selected_reasons else lhb_df[lhb_df["上榜原因"].isin(selected_reasons)]
-            st.dataframe(
-                filtered_lhb[show_cols].sort_values("龙虎榜净买额", ascending=False)
-                    .reset_index(drop=True)
-                    .style.format({k: v for k, v in fmt.items() if k in show_cols}),
-                use_container_width=True,
-                height=520,
-            )
+                total_stocks   = lhb_df["代码"].nunique()
+                total_net_buy  = lhb_df.groupby("代码")["龙虎榜净买额"].sum()
+                top_code       = total_net_buy.idxmax() if not total_net_buy.empty else "—"
+                top_name       = lhb_df.loc[lhb_df["代码"] == top_code, "名称"].iloc[0] if top_code != "—" else "—"
 
-            # 上榜原因分布
-            st.subheader("上榜原因分布")
-            reason_counts = lhb_df["上榜原因"].value_counts().reset_index()
-            reason_counts.columns = ["上榜原因", "上榜次数"]
-            st.dataframe(reason_counts, use_container_width=True, hide_index=True)
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("上榜股票数", f"{total_stocks} 只")
+                c2.metric("上榜记录数", f"{len(lhb_df)} 条")
+                c3.metric("净买入最强", f"{top_name}({top_code})")
+                c4.metric("数据时间", lhb_updated)
+                st.caption("同一股票可能因多个原因多次上榜，每条原因单独一行")
+
+                show_cols = [c for c in ["代码", "名称", "上榜原因", "涨跌幅", "龙虎榜净买额",
+                             "龙虎榜买入额", "龙虎榜卖出额", "换手率", "净买额占总成交比"] if c in lhb_df.columns]
+                all_reasons = sorted(lhb_df["上榜原因"].dropna().unique().tolist())
+                sel_reasons = st.multiselect("筛选上榜原因（不选则显示全部）", options=all_reasons, default=[], key="lhb_today_reason")
+                filtered = lhb_df if not sel_reasons else lhb_df[lhb_df["上榜原因"].isin(sel_reasons)]
+                st.dataframe(
+                    filtered[show_cols].sort_values("龙虎榜净买额", ascending=False)
+                        .reset_index(drop=True)
+                        .style.format({k: v for k, v in lhb_fmt.items() if k in show_cols}),
+                    use_container_width=True, height=520,
+                )
+
+                st.subheader("上榜原因分布")
+                reason_counts = lhb_df["上榜原因"].value_counts().reset_index()
+                reason_counts.columns = ["上榜原因", "上榜次数"]
+                st.dataframe(reason_counts, use_container_width=True, hide_index=True)
 
             # 上榜原因详解
             with st.expander("📖 上榜原因详解（点击展开）"):
@@ -825,6 +875,42 @@ def show_main_content():
 > 反映的是"相对市场"的异常涨跌，而非绝对涨跌幅。
 > **上榜 ≠ 利好/利空**，龙虎榜只是异常交易的预警，需结合基本面和机构席位方向综合判断。
 """)
+
+        # ── 历史记录子Tab ──────────────────────────────────────
+        with sub_history:
+            hist_df = load_lhb_history()
+            if hist_df.empty:
+                st.info("暂无历史数据，请先运行回填脚本或等待今日数据存入。")
+            else:
+                hist_show_cols = [c for c in ["上榜日", "代码", "名称", "上榜原因", "涨跌幅",
+                                  "龙虎榜净买额", "龙虎榜买入额", "龙虎榜卖出额",
+                                  "换手率", "净买额占总成交比"] if c in hist_df.columns]
+
+                fa, fb, fc = st.columns([2, 2, 3])
+                with fa:
+                    date_options = ["全部"] + sorted(hist_df["上榜日"].dropna().unique().tolist(), reverse=True)
+                    sel_date = st.selectbox("按日期筛选", date_options, key="lhb_hist_date")
+                with fb:
+                    kw = st.text_input("股票代码 / 名称搜索", key="lhb_hist_kw")
+                with fc:
+                    hist_reasons = sorted(hist_df["上榜原因"].dropna().unique().tolist())
+                    sel_hist_reasons = st.multiselect("上榜原因", hist_reasons, default=[], key="lhb_hist_reason")
+
+                view = hist_df.copy()
+                if sel_date != "全部":
+                    view = view[view["上榜日"] == sel_date]
+                if kw:
+                    view = view[view["代码"].str.contains(kw, na=False) | view["名称"].str.contains(kw, na=False)]
+                if sel_hist_reasons:
+                    view = view[view["上榜原因"].isin(sel_hist_reasons)]
+
+                st.caption(f"共 {len(view)} 条记录")
+                st.dataframe(
+                    view[hist_show_cols].reset_index(drop=True)
+                        .style.format({k: v for k, v in lhb_fmt.items() if k in hist_show_cols}),
+                    use_container_width=True,
+                    height=600,
+                )
 
     # ── 涨停 / 跌停 Tab ───────────────────────────────────────
     with tab_ztdt:
@@ -978,6 +1064,6 @@ st.title("📊 板块资金流向 · 实时")
 show_main_content()
 
 # 存库错误提示（调试用，正常运行时不会出现）
-for _key, _label in [("_save_industry_err", "行业存库"), ("_save_concept_err", "概念存库"), ("_save_zt_dt_err", "涨跌停存库")]:
+for _key, _label in [("_save_industry_err", "行业存库"), ("_save_concept_err", "概念存库"), ("_save_zt_dt_err", "涨跌停存库"), ("_save_lhb_err", "龙虎榜存库")]:
     if st.session_state.get(_key):
         st.error(f"[{_label}错误] {st.session_state[_key]}")
