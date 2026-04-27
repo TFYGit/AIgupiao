@@ -762,8 +762,15 @@ def show_main_content():
                 "成交额占总成交比": "{:.2f}%",
             }
             st.subheader("今日龙虎榜明细（净买额单位：亿元）")
+            all_reasons = sorted(lhb_df["上榜原因"].dropna().unique().tolist())
+            selected_reasons = st.multiselect(
+                "筛选上榜原因（不选则显示全部）",
+                options=all_reasons,
+                default=[],
+            )
+            filtered_lhb = lhb_df if not selected_reasons else lhb_df[lhb_df["上榜原因"].isin(selected_reasons)]
             st.dataframe(
-                lhb_df[show_cols].sort_values("龙虎榜净买额", ascending=False)
+                filtered_lhb[show_cols].sort_values("龙虎榜净买额", ascending=False)
                     .reset_index(drop=True)
                     .style.format({k: v for k, v in fmt.items() if k in show_cols}),
                 use_container_width=True,
