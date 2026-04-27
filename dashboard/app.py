@@ -599,7 +599,7 @@ def show_main_content():
     is_open    = is_market_open()
     is_auction = is_auction_time()
 
-    tab_industry, tab_concept = st.tabs(["📈 行业板块", "💡 概念板块"])
+    tab_industry, tab_concept, tab_ztdt = st.tabs(["📈 行业板块", "💡 概念板块", "🔴 涨停 / 跌停"])
 
     # ── 行业板块 Tab ──────────────────────────────────────────
     with tab_industry:
@@ -650,7 +650,6 @@ def show_main_content():
                     render_fund_flow(df, updated_at, is_open, prev_df, turnover,
                                      zt_total=zt_total, dt_total=dt_total)
                     show_top5_history(df)
-                    show_zt_dt_trend(zt_total, dt_total)
             except Exception as e:
                 st.error(f"数据获取失败：{e}")
 
@@ -694,6 +693,15 @@ def show_main_content():
                 show_top5_history(df, load_fn=load_concept_history)
         except Exception as e:
             st.error(f"概念数据获取失败：{e}")
+
+    # ── 涨停 / 跌停 Tab ───────────────────────────────────────
+    with tab_ztdt:
+        zt_total = fetch_zt_total()
+        dt_total = fetch_dt_count()
+        c1, c2 = st.columns(2)
+        c1.metric("今日涨停", f"{zt_total} 只")
+        c2.metric("今日跌停", f"{dt_total} 只")
+        show_zt_dt_trend(zt_total, dt_total)
 
 
 def show_top5_history(current_df: pd.DataFrame, load_fn=None):
