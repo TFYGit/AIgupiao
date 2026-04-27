@@ -189,6 +189,25 @@ def fetch_zt_count() -> dict:
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
+def fetch_dt_count() -> int:
+    """用akshare跌停池统计今日跌停总数"""
+    import threading
+    result, error = [None], [None]
+    def _run():
+        try:
+            today = now_bjt().strftime("%Y%m%d")
+            result[0] = ak.stock_dt_pool_em(date=today)
+        except Exception as e:
+            error[0] = e
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(15)
+    if t.is_alive() or error[0] or result[0] is None or result[0].empty:
+        return 0
+    return len(result[0])
+
+
+@st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_data():
     import threading
     result, error = [None], [None]
@@ -460,7 +479,7 @@ def render_auction(df):
     )
 
 
-def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—"):
+def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—", zt_total=None, dt_total=None):
     # 提前计算环比，供 metric 和表格共用
     show_df = df.copy()
     if prev_df is not None and "行业板块" in prev_df.columns:
@@ -474,7 +493,7 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—"):
     else:
         qob_up = qob_down = None
 
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(8)
     inflow_count  = int((df["净流入(亿元)"] > 0).sum())
     outflow_count = int((df["净流入(亿元)"] < 0).sum())
     total_count   = len(df)
@@ -494,6 +513,8 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—"):
     col4.metric("环比下降板块", f"{qob_down} 个" if qob_down is not None else "—", delta_color="off")
     col5.metric("今日市场成交额总计", turnover)
     col6.metric("最强板块", top_industry)
+    col7.metric("今日涨停", f"{zt_total} 只" if zt_total is not None else "—")
+    col8.metric("今日跌停", f"{dt_total} 只" if dt_total is not None else "—")
 
     if is_open:
         st.caption(f"最后更新：{updated_at}　　每 {REFRESH_INTERVAL // 60} 分钟自动刷新")
@@ -573,7 +594,10 @@ def show_main_content():
                     prev_df    = st.session_state.get("prev_df")
                     updated_at = st.session_state.get("last_update", "—")
                     turnover   = st.session_state.get("turnover", "—")
-                    render_fund_flow(df, updated_at, is_open, prev_df, turnover)
+                    zt_total   = sum(fetch_zt_count().values())
+                    dt_total   = fetch_dt_count()
+                    render_fund_flow(df, updated_at, is_open, prev_df, turnover,
+                                     zt_total=zt_total, dt_total=dt_total)
                     show_top5_history(df)
             except Exception as e:
                 st.error(f"数据获取失败：{e}")
@@ -611,7 +635,10 @@ def show_main_content():
                 prev_df    = st.session_state.get("prev_concept_df")
                 updated_at = st.session_state.get("last_concept_update", "—")
                 turnover   = st.session_state.get("turnover", "—")
-                render_fund_flow(df, updated_at, is_open, prev_df, turnover)
+                zt_total   = sum(fetch_zt_count().values())
+                dt_total   = fetch_dt_count()
+                render_fund_flow(df, updated_at, is_open, prev_df, turnover,
+                                 zt_total=zt_total, dt_total=dt_total)
                 show_top5_history(df, load_fn=load_concept_history)
         except Exception as e:
             st.error(f"概念数据获取失败：{e}")

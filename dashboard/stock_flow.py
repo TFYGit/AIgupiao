@@ -7,6 +7,13 @@ from datetime import datetime, timezone, timedelta
 
 BJT = timezone(timedelta(hours=8))
 REFRESH_INTERVAL = 300
+MARKET_OPEN  = (9,  0)
+MARKET_CLOSE = (15, 30)
+
+
+def is_market_open() -> bool:
+    t = (now_bjt().hour, now_bjt().minute)
+    return MARKET_OPEN <= t <= MARKET_CLOSE
 
 st.set_page_config(
     page_title="个股资金流向",
