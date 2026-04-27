@@ -797,7 +797,7 @@ def show_zt_dt_trend(zt_today: int, dt_today: int):
 
     today_row = pd.DataFrame([{"date": today, "zt_count": zt_today, "dt_count": dt_today}])
     df = pd.concat([history[history["date"] != today], today_row], ignore_index=True)
-    df = df.sort_values("date").tail(10).reset_index(drop=True)
+    df = df.sort_values("date", ascending=False).head(10).reset_index(drop=True)
     if df.empty:
         return
 
