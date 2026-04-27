@@ -141,6 +141,35 @@ def init_prev_from_db(table_name: str) -> "pd.DataFrame | None":
         return None
 
 
+def load_zt_dt_history() -> pd.DataFrame:
+    """从 Supabase 加载近10个交易日涨停/跌停数"""
+    try:
+        sb = get_supabase()
+        rows = (sb.table("zt_dt_history")
+                  .select("date,zt_count,dt_count")
+                  .order("date", desc=False)
+                  .execute().data)
+        if not rows:
+            return pd.DataFrame(columns=["date", "zt_count", "dt_count"])
+        df = pd.DataFrame(rows).sort_values("date").tail(10).reset_index(drop=True)
+        return df
+    except Exception:
+        return pd.DataFrame(columns=["date", "zt_count", "dt_count"])
+
+
+def save_zt_dt_history(zt_count: int, dt_count: int):
+    """把今日涨停/跌停数 upsert 到 Supabase"""
+    today = now_bjt().strftime("%Y-%m-%d")
+    try:
+        sb = get_supabase()
+        sb.table("zt_dt_history").upsert(
+            {"date": today, "zt_count": zt_count, "dt_count": dt_count},
+            on_conflict="date"
+        ).execute()
+    except Exception as e:
+        st.session_state["_save_zt_dt_err"] = str(e)[:200]
+
+
 def is_market_open() -> bool:
     t = (now_bjt().hour, now_bjt().minute)
     return MARKET_OPEN <= t <= MARKET_CLOSE
@@ -600,6 +629,9 @@ def show_main_content():
                         st.session_state["turnover"]    = turnover
                         if is_open:
                             save_history(new_df, prev_df=last_df)
+                            zt_snap = fetch_zt_total()
+                            dt_snap = fetch_dt_count()
+                            save_zt_dt_history(zt_snap, dt_snap)
                 except Exception as fetch_err:
                     if st.session_state.get("last_df") is None:
                         st.error(f"数据获取失败且无缓存：{fetch_err}")
@@ -618,6 +650,7 @@ def show_main_content():
                     render_fund_flow(df, updated_at, is_open, prev_df, turnover,
                                      zt_total=zt_total, dt_total=dt_total)
                     show_top5_history(df)
+                    show_zt_dt_trend(zt_total, dt_total)
             except Exception as e:
                 st.error(f"数据获取失败：{e}")
 
@@ -757,11 +790,54 @@ def show_top5_history(current_df: pd.DataFrame, load_fn=None):
     )
 
 
+def show_zt_dt_trend(zt_today: int, dt_today: int):
+    """展示近10日涨停/跌停家数趋势"""
+    history = load_zt_dt_history()
+    today = now_bjt().strftime("%Y-%m-%d")
+
+    today_row = pd.DataFrame([{"date": today, "zt_count": zt_today, "dt_count": dt_today}])
+    df = pd.concat([history[history["date"] != today], today_row], ignore_index=True)
+    df = df.sort_values("date").tail(10).reset_index(drop=True)
+    if df.empty:
+        return
+
+    df["date_label"] = df["date"].str[5:]   # 只显示 MM-DD
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=df["date_label"], y=df["zt_count"], name="涨停家数",
+        marker_color="#ef5350",
+        text=df["zt_count"], textposition="outside",
+    ))
+    fig.add_trace(go.Bar(
+        x=df["date_label"], y=df["dt_count"], name="跌停家数",
+        marker_color="#26a69a",
+        text=df["dt_count"], textposition="outside",
+    ))
+    fig.update_layout(
+        title="近10日涨停 / 跌停家数",
+        barmode="group",
+        height=360,
+        margin=dict(t=50, b=40),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        legend=dict(orientation="h", y=1.08),
+    )
+    st.divider()
+    st.subheader("近10日涨停 / 跌停统计")
+    st.plotly_chart(fig, use_container_width=True)
+
+    table = df[["date", "zt_count", "dt_count"]].rename(
+        columns={"date": "日期", "zt_count": "涨停家数", "dt_count": "跌停家数"}
+    ).set_index("日期").T
+    st.dataframe(table, use_container_width=True)
+
+
 # ---- 页面入口 ----
 st.title("📊 板块资金流向 · 实时")
 show_main_content()
 
 # 存库错误提示（调试用，正常运行时不会出现）
-for _key, _label in [("_save_industry_err", "行业存库"), ("_save_concept_err", "概念存库")]:
+for _key, _label in [("_save_industry_err", "行业存库"), ("_save_concept_err", "概念存库"), ("_save_zt_dt_err", "涨跌停存库")]:
     if st.session_state.get(_key):
         st.error(f"[{_label}错误] {st.session_state[_key]}")
