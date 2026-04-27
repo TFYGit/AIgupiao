@@ -256,6 +256,36 @@ def fetch_dt_count() -> int:
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
+def fetch_lhb_data():
+    """获取今日龙虎榜数据"""
+    import threading
+    result, error = [None], [None]
+    def _run():
+        try:
+            today = now_bjt().strftime("%Y%m%d")
+            result[0] = ak.stock_lhb_detail_em(start_date=today, end_date=today)
+        except Exception as e:
+            error[0] = e
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(30)
+    if t.is_alive():
+        raise TimeoutError("龙虎榜接口超时")
+    if error[0]:
+        raise error[0]
+    df = result[0]
+    if df is None or df.empty:
+        raise ValueError("今日暂无龙虎榜数据")
+    for col in ["龙虎榜净买额", "龙虎榜买入额", "龙虎榜卖出额", "龙虎榜成交额", "市场总成交额", "流通市值"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce") / 1e8
+    for col in ["涨跌幅", "换手率", "净买额占总成交比", "成交额占总成交比"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df, now_bjt().strftime("%Y-%m-%d %H:%M:%S")
+
+
+@st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_data():
     import threading
     result, error = [None], [None]
@@ -599,7 +629,7 @@ def show_main_content():
     is_open    = is_market_open()
     is_auction = is_auction_time()
 
-    tab_industry, tab_concept, tab_ztdt = st.tabs(["📈 行业板块", "💡 概念板块", "🔴 涨停 / 跌停"])
+    tab_industry, tab_concept, tab_ztdt, tab_lhb = st.tabs(["📈 行业板块", "💡 概念板块", "🔴 涨停 / 跌停", "🐉 龙虎榜"])
 
     # ── 行业板块 Tab ──────────────────────────────────────────
     with tab_industry:
@@ -693,6 +723,101 @@ def show_main_content():
                 show_top5_history(df, load_fn=load_concept_history)
         except Exception as e:
             st.error(f"概念数据获取失败：{e}")
+
+    # ── 龙虎榜 Tab ────────────────────────────────────────────
+    with tab_lhb:
+        try:
+            lhb_df, lhb_updated = fetch_lhb_data()
+        except Exception as e:
+            st.error(f"龙虎榜数据获取失败：{e}")
+            lhb_df = None
+
+        if lhb_df is not None:
+            # 顶部指标
+            total_stocks  = lhb_df["代码"].nunique()
+            total_net_buy = lhb_df.groupby("代码")["龙虎榜净买额"].sum()
+            net_inflow_top = total_net_buy.idxmax() if not total_net_buy.empty else "—"
+            net_inflow_top_name = lhb_df.loc[lhb_df["代码"] == net_inflow_top, "名称"].iloc[0] if net_inflow_top != "—" else "—"
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("今日上榜股票数", f"{total_stocks} 只")
+            c2.metric("上榜记录数", f"{len(lhb_df)} 条")
+            c3.metric("净买入最强", f"{net_inflow_top_name}({net_inflow_top})")
+            c4.metric("数据时间", lhb_updated)
+
+            st.caption("同一股票可能因多个原因多次上榜，每条原因单独一行")
+
+            # 主表格
+            show_cols = ["代码", "名称", "上榜原因", "涨跌幅", "龙虎榜净买额",
+                         "龙虎榜买入额", "龙虎榜卖出额", "换手率",
+                         "净买额占总成交比", "成交额占总成交比"]
+            show_cols = [c for c in show_cols if c in lhb_df.columns]
+            fmt = {
+                "涨跌幅":         "{:+.2f}%",
+                "换手率":         "{:.2f}%",
+                "龙虎榜净买额":   "{:+.2f}",
+                "龙虎榜买入额":   "{:.2f}",
+                "龙虎榜卖出额":   "{:.2f}",
+                "净买额占总成交比": "{:.2f}%",
+                "成交额占总成交比": "{:.2f}%",
+            }
+            st.subheader("今日龙虎榜明细（净买额单位：亿元）")
+            st.dataframe(
+                lhb_df[show_cols].sort_values("龙虎榜净买额", ascending=False)
+                    .reset_index(drop=True)
+                    .style.format({k: v for k, v in fmt.items() if k in show_cols}),
+                use_container_width=True,
+                height=520,
+            )
+
+            # 上榜原因分布
+            st.subheader("上榜原因分布")
+            reason_counts = lhb_df["上榜原因"].value_counts().reset_index()
+            reason_counts.columns = ["上榜原因", "上榜次数"]
+            st.dataframe(reason_counts, use_container_width=True, hide_index=True)
+
+            # 上榜原因详解
+            with st.expander("📖 上榜原因详解（点击展开）"):
+                st.markdown("""
+**交易所规定以下情形的证券当日收盘后纳入龙虎榜，公开披露前五大买入/卖出席位：**
+
+---
+
+#### 一、单日涨跌幅异常
+| 原因 | 触发条件 |
+|------|---------|
+| 日涨幅偏离值达到7% | 当日收盘涨幅偏离值 ≥ +7%，取前5只（涨幅最高） |
+| 日跌幅偏离值达到7% | 当日收盘跌幅偏离值 ≥ -7%，取前5只（跌幅最深） |
+| 日振幅值达到15% | 当日振幅（最高-最低/昨收）≥ 15%，取前5只 |
+| 日涨幅达到15% | 当日收盘涨幅 ≥ 15%（主要针对20cm股/科创板/创业板） |
+| 日跌幅达到15% | 当日收盘跌幅 ≥ -15% |
+
+#### 二、连续多日累计偏离异常
+| 原因 | 触发条件 |
+|------|---------|
+| 连续3日累计涨幅偏离 ≥ 20% | 普通证券3日内涨幅偏离值累计 ≥ 20% |
+| 连续3日累计涨幅偏离 ≥ 30% | 普通证券3日内涨幅偏离值累计 ≥ 30% |
+| 连续3日累计涨幅偏离 ≥ 12% | ST / *ST 证券3日内累计 ≥ 12% |
+| 连续3日累计跌幅偏离 ≥ 12% | ST / *ST 证券3日内跌幅累计 ≥ 12% |
+
+#### 三、换手率异常
+| 原因 | 触发条件 |
+|------|---------|
+| 日换手率达到20% | 当日换手率 ≥ 20%，取前5只 |
+| 日换手率达到30% | 当日换手率 ≥ 30%，取前5只 |
+
+#### 四、可转债
+| 原因 | 触发条件 |
+|------|---------|
+| 日涨幅达到15%的可转债 | 可转债当日涨幅 ≥ 15% |
+| 连续3日累计涨幅偏离 ≥ 30% 的可转债 | 可转债3日内偏离 ≥ 30% |
+
+---
+
+> **偏离值说明**：偏离值 = 个股涨跌幅 - 同期上证综指/深证成指涨跌幅。
+> 反映的是"相对市场"的异常涨跌，而非绝对涨跌幅。
+> **上榜 ≠ 利好/利空**，龙虎榜只是异常交易的预警，需结合基本面和机构席位方向综合判断。
+""")
 
     # ── 涨停 / 跌停 Tab ───────────────────────────────────────
     with tab_ztdt:
