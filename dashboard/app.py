@@ -189,14 +189,33 @@ def fetch_zt_count() -> dict:
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
-def fetch_dt_count() -> int:
-    """用akshare跌停池统计今日跌停总数"""
+def fetch_zt_total() -> int:
+    """直接查涨停池，返回今日涨停总家数"""
     import threading
     result, error = [None], [None]
     def _run():
         try:
             today = now_bjt().strftime("%Y%m%d")
-            result[0] = ak.stock_dt_pool_em(date=today)
+            result[0] = ak.stock_zt_pool_em(date=today)
+        except Exception as e:
+            error[0] = e
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(15)
+    if t.is_alive() or error[0] or result[0] is None or result[0].empty:
+        return 0
+    return len(result[0])
+
+
+@st.cache_data(ttl=REFRESH_INTERVAL)
+def fetch_dt_count() -> int:
+    """直接查跌停池，返回今日跌停总家数"""
+    import threading
+    result, error = [None], [None]
+    def _run():
+        try:
+            today = now_bjt().strftime("%Y%m%d")
+            result[0] = ak.stock_zt_pool_dtgc_em(date=today)
         except Exception as e:
             error[0] = e
     t = threading.Thread(target=_run, daemon=True)
@@ -594,7 +613,7 @@ def show_main_content():
                     prev_df    = st.session_state.get("prev_df")
                     updated_at = st.session_state.get("last_update", "—")
                     turnover   = st.session_state.get("turnover", "—")
-                    zt_total   = sum(fetch_zt_count().values())
+                    zt_total   = fetch_zt_total()
                     dt_total   = fetch_dt_count()
                     render_fund_flow(df, updated_at, is_open, prev_df, turnover,
                                      zt_total=zt_total, dt_total=dt_total)
