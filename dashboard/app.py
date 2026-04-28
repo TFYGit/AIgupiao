@@ -306,6 +306,38 @@ def fetch_dt_count() -> int:
     return len(result[0])
 
 
+@st.cache_data(ttl=3600)
+def fetch_concept_tags(codes: tuple) -> dict:
+    """并行获取股票所属概念板块（东方财富f127），返回 {code: '概念1,概念2,...'}"""
+    import threading
+    result = {c: "" for c in codes}
+    lock = threading.Lock()
+
+    def _secid(code):
+        return f"1.{code}" if code.startswith(("6", "9", "5")) else f"0.{code}"
+
+    def _fetch(code):
+        try:
+            resp = requests.get(
+                "https://push2.eastmoney.com/api/qt/stock/get",
+                params={"secid": _secid(code), "fields": "f127"},
+                headers=_EM_HEADERS,
+                timeout=10,
+            )
+            tags = resp.json().get("data", {}).get("f127") or ""
+            with lock:
+                result[code] = str(tags)
+        except Exception:
+            pass
+
+    threads = [threading.Thread(target=_fetch, args=(c,), daemon=True) for c in codes]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=15)
+    return result
+
+
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_lhb_data():
     """获取今日龙虎榜数据"""
@@ -816,7 +848,13 @@ def show_main_content():
                 c4.metric("数据时间", lhb_updated)
                 st.caption("同一股票可能因多个原因多次上榜，每条原因单独一行")
 
-                show_cols = [c for c in ["代码", "名称", "上榜原因", "涨跌幅", "龙虎榜净买额",
+                # 并行拉取概念板块
+                unique_codes = tuple(sorted(lhb_df["代码"].unique()))
+                concept_map = fetch_concept_tags(unique_codes)
+                lhb_df = lhb_df.copy()
+                lhb_df["概念板块"] = lhb_df["代码"].map(lambda c: concept_map.get(c, ""))
+
+                show_cols = [c for c in ["代码", "名称", "概念板块", "上榜原因", "涨跌幅", "龙虎榜净买额",
                              "龙虎榜买入额", "龙虎榜卖出额", "换手率", "净买额占总成交比"] if c in lhb_df.columns]
                 all_reasons = sorted(lhb_df["上榜原因"].dropna().unique().tolist())
                 sel_reasons = st.multiselect("筛选上榜原因（不选则显示全部）", options=all_reasons, default=[], key="lhb_today_reason")
