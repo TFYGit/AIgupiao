@@ -405,6 +405,7 @@ def fetch_data():
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_concept_data():
+    """获取概念板块资金流向，失败时返回 (None, None) 而非抛异常（保证结果被缓存，避免重复阻塞）"""
     import threading
     result, error = [None], [None]
     def _run():
@@ -414,14 +415,10 @@ def fetch_concept_data():
             error[0] = e
     t = threading.Thread(target=_run, daemon=True)
     t.start()
-    t.join(30)
-    if t.is_alive():
-        raise TimeoutError("概念板块资金流向接口超时，稍后重试")
-    if error[0]:
-        raise error[0]
+    t.join(60)
+    if t.is_alive() or error[0] or result[0] is None or result[0].empty:
+        return None, None
     df = result[0]
-    if df is None or df.empty:
-        raise ValueError("概念板块数据为空，稍后重试")
 
     # 兼容 akshare 返回的列名（行业/概念/板块名称 三选一）
     for col_name in ["行业", "概念", "板块名称"]:
@@ -747,26 +744,33 @@ def show_main_content():
         try:
             try:
                 new_df, updated_at = fetch_concept_data()
-                last_df = st.session_state.get("last_concept_df")
-                orig_len = len(new_df)
-                if last_df is not None and orig_len < len(last_df) - 2:
-                    missing = last_df[~last_df["行业板块"].isin(new_df["行业板块"])]
-                    new_df = pd.concat([new_df, missing]).sort_values("净流入(亿元)", ascending=False).reset_index(drop=True)
-                    new_df.index += 1
-                    st.caption(f"ℹ️ 新数据 {orig_len} 个板块，缺失 {len(missing)} 个已从缓存补全")
-                today_str = now_bjt().strftime("%Y-%m-%d")
-                if updated_at != st.session_state.get("last_concept_update"):
-                    st.session_state["prev_concept_df"]     = last_df
-                    st.session_state["last_concept_df"]     = new_df
-                    st.session_state["last_concept_update"] = updated_at
-                    if is_open:
-                        save_concept_history(new_df, prev_df=last_df)
-                        st.session_state["last_saved_concept_date"] = today_str
-                elif is_open and st.session_state.get("last_saved_concept_date") != today_str:
-                    df_to_save = st.session_state.get("last_concept_df")
-                    if df_to_save is not None:
-                        save_concept_history(df_to_save)
-                        st.session_state["last_saved_concept_date"] = today_str
+                if new_df is None:
+                    # 接口暂时不可用（结果已缓存，5分钟后自动重试），沿用旧数据
+                    if st.session_state.get("last_concept_df") is None:
+                        st.warning("概念板块数据暂时不可用，稍后自动重试")
+                    else:
+                        st.caption("⚠️ 概念数据暂时不可用，显示上次缓存")
+                else:
+                    last_df = st.session_state.get("last_concept_df")
+                    orig_len = len(new_df)
+                    if last_df is not None and orig_len < len(last_df) - 2:
+                        missing = last_df[~last_df["行业板块"].isin(new_df["行业板块"])]
+                        new_df = pd.concat([new_df, missing]).sort_values("净流入(亿元)", ascending=False).reset_index(drop=True)
+                        new_df.index += 1
+                        st.caption(f"ℹ️ 新数据 {orig_len} 个板块，缺失 {len(missing)} 个已从缓存补全")
+                    today_str = now_bjt().strftime("%Y-%m-%d")
+                    if updated_at != st.session_state.get("last_concept_update"):
+                        st.session_state["prev_concept_df"]     = last_df
+                        st.session_state["last_concept_df"]     = new_df
+                        st.session_state["last_concept_update"] = updated_at
+                        if is_open:
+                            save_concept_history(new_df, prev_df=last_df)
+                            st.session_state["last_saved_concept_date"] = today_str
+                    elif is_open and st.session_state.get("last_saved_concept_date") != today_str:
+                        df_to_save = st.session_state.get("last_concept_df")
+                        if df_to_save is not None:
+                            save_concept_history(df_to_save)
+                            st.session_state["last_saved_concept_date"] = today_str
             except Exception as fetch_err:
                 if st.session_state.get("last_concept_df") is None:
                     st.error(f"概念数据获取失败且无缓存：{fetch_err}")
