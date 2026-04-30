@@ -972,10 +972,16 @@ def show_main_content():
 
     # ── 强势板块统计 Tab ──────────────────────────────────────
     with tab_freq:
-        st.subheader("行业板块")
-        show_top20_frequency(load_history(), "行业板块")
-        st.subheader("概念板块")
-        show_top20_frequency(load_concept_history(), "概念板块")
+        try:
+            ind_hist = load_history()
+            con_hist = load_concept_history()
+            st.caption(f"行业历史：{len(ind_hist)} 个交易日　概念历史：{len(con_hist)} 个交易日")
+            st.subheader("行业板块")
+            show_top20_frequency(ind_hist, "行业板块")
+            st.subheader("概念板块")
+            show_top20_frequency(con_hist, "概念板块")
+        except Exception as e:
+            st.error(f"强势板块统计加载失败：{e}")
 
     # ── 涨停 / 跌停 Tab ───────────────────────────────────────
     with tab_ztdt:
