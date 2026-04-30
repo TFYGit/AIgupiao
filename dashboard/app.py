@@ -200,6 +200,42 @@ def load_lhb_history() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
+def load_all_industry_history() -> dict:
+    """加载 industry_fund_history 全部历史数据（不限日期），用于频率统计"""
+    try:
+        sb = get_supabase()
+        rows = (sb.table("industry_fund_history")
+                  .select("date,industry,net_inflow")
+                  .order("date", desc=False)
+                  .limit(10000)
+                  .execute().data)
+        history: dict = {}
+        for r in rows:
+            history.setdefault(str(r["date"]), {})[r["industry"]] = r["net_inflow"]
+        return history
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=REFRESH_INTERVAL)
+def load_all_concept_history() -> dict:
+    """加载 concept_fund_history 全部历史数据（不限日期），用于频率统计"""
+    try:
+        sb = get_supabase()
+        rows = (sb.table("concept_fund_history")
+                  .select("date,industry,net_inflow")
+                  .order("date", desc=False)
+                  .limit(10000)
+                  .execute().data)
+        history: dict = {}
+        for r in rows:
+            history.setdefault(str(r["date"]), {})[r["industry"]] = r["net_inflow"]
+        return history
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=REFRESH_INTERVAL)
 def load_zt_dt_history() -> pd.DataFrame:
     """从 Supabase 加载近10个交易日涨停/跌停数"""
     try:
@@ -764,6 +800,7 @@ def show_main_content():
                     render_fund_flow(df, updated_at, is_open, prev_df, turnover,
                                      zt_total=zt_total, dt_total=dt_total)
                     show_top5_history(df)
+                    show_top20_frequency(load_all_industry_history(), "行业板块")
             except Exception as e:
                 st.error(f"数据获取失败：{e}")
 
@@ -819,6 +856,7 @@ def show_main_content():
                 render_fund_flow(df, updated_at, is_open, prev_df, turnover,
                                  zt_total=zt_total, dt_total=dt_total)
                 show_top5_history(df, load_fn=load_concept_history)
+                show_top20_frequency(load_all_concept_history(), "概念板块")
         except Exception as e:
             st.error(f"概念数据获取失败：{e}")
 
@@ -1071,6 +1109,68 @@ def show_top5_history(current_df: pd.DataFrame, load_fn=None):
     st.dataframe(
         top5_sum_df.style.format(fmt),
         use_container_width=True,
+    )
+
+
+def show_top20_frequency(history: dict, title_prefix: str = "行业板块"):
+    """展示历史上净流入TOP20中出现频率最高的板块（横向柱状图 + 明细表）"""
+    if not history:
+        st.info("暂无足够历史数据")
+        return
+
+    from collections import Counter
+    total_days = len(history)
+    counter: Counter = Counter()
+    net_sum: dict = {}
+
+    for sectors in history.values():
+        if not sectors:
+            continue
+        top20 = sorted(sectors.items(), key=lambda x: x[1] if x[1] is not None else -999, reverse=True)[:20]
+        for s, v in top20:
+            counter[s] += 1
+            net_sum[s] = net_sum.get(s, 0) + (v or 0)
+
+    if not counter:
+        return
+
+    freq_df = pd.DataFrame([
+        {
+            "板块名称":         s,
+            "上榜次数(天)":     cnt,
+            "上榜率%":          round(cnt / total_days * 100, 1),
+            "平均净流入(亿元)": round(net_sum[s] / cnt, 2),
+        }
+        for s, cnt in counter.most_common(30)
+    ])
+
+    st.divider()
+    st.subheader(f"{title_prefix} · 净流入TOP20出现频率（全量历史，共 {total_days} 个交易日）")
+
+    top_df = freq_df.head(20).iloc[::-1].reset_index(drop=True)
+    fig = go.Figure(go.Bar(
+        y=top_df["板块名称"],
+        x=top_df["上榜次数(天)"],
+        orientation="h",
+        marker_color="#ef5350",
+        text=top_df.apply(lambda r: f"{int(r['上榜次数(天)'])}天 ({r['上榜率%']}%)", axis=1),
+        textposition="outside",
+        hovertemplate="<b>%{y}</b><br>上榜次数: %{x} 天<extra></extra>",
+    ))
+    fig.update_layout(
+        height=600,
+        margin=dict(t=30, b=30, l=10, r=120),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        xaxis_title="出现天数",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.dataframe(
+        freq_df.style.format({"上榜率%": "{:.1f}%", "平均净流入(亿元)": "{:+.2f}"}),
+        use_container_width=True,
+        hide_index=True,
+        height=460,
     )
 
 
