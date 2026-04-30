@@ -306,37 +306,6 @@ def fetch_dt_count() -> int:
     return len(result[0])
 
 
-@st.cache_data(ttl=3600)
-def fetch_concept_tags(codes: tuple) -> dict:
-    """并行获取股票所属概念板块（东方财富f127），返回 {code: '概念1,概念2,...'}"""
-    import threading
-    result = {c: "" for c in codes}
-    lock = threading.Lock()
-
-    def _secid(code):
-        return f"1.{code}" if code.startswith(("6", "9", "5")) else f"0.{code}"
-
-    def _fetch(code):
-        try:
-            resp = requests.get(
-                "https://push2.eastmoney.com/api/qt/stock/get",
-                params={"secid": _secid(code), "fields": "f127"},
-                headers=_EM_HEADERS,
-                timeout=10,
-            )
-            tags = resp.json().get("data", {}).get("f127") or ""
-            with lock:
-                result[code] = str(tags)
-        except Exception:
-            pass
-
-    threads = [threading.Thread(target=_fetch, args=(c,), daemon=True) for c in codes]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=15)
-    return result
-
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_lhb_data():
@@ -735,6 +704,7 @@ def show_main_content():
                         new_df = pd.concat([new_df, missing]).sort_values("净流入(亿元)", ascending=False).reset_index(drop=True)
                         new_df.index += 1
                         st.caption(f"ℹ️ 新数据 {orig_len} 个板块，缺失 {len(missing)} 个已从缓存补全")
+                    today_str = now_bjt().strftime("%Y-%m-%d")
                     if updated_at != st.session_state.get("last_update"):
                         st.session_state["prev_df"]     = last_df
                         st.session_state["last_df"]     = new_df
@@ -742,9 +712,16 @@ def show_main_content():
                         st.session_state["turnover"]    = turnover
                         if is_open:
                             save_history(new_df, prev_df=last_df)
+                            st.session_state["last_saved_industry_date"] = today_str
                             zt_snap = fetch_zt_total()
                             dt_snap = fetch_dt_count()
                             save_zt_dt_history(zt_snap, dt_snap)
+                    elif is_open and st.session_state.get("last_saved_industry_date") != today_str:
+                        # 保底：当日尚未存过则补存一次（应对 Streamlit 重启后缓存 updated_at 未变化的情况）
+                        df_to_save = st.session_state.get("last_df")
+                        if df_to_save is not None:
+                            save_history(df_to_save)
+                            st.session_state["last_saved_industry_date"] = today_str
                 except Exception as fetch_err:
                     if st.session_state.get("last_df") is None:
                         st.error(f"数据获取失败且无缓存：{fetch_err}")
@@ -780,12 +757,19 @@ def show_main_content():
                     new_df = pd.concat([new_df, missing]).sort_values("净流入(亿元)", ascending=False).reset_index(drop=True)
                     new_df.index += 1
                     st.caption(f"ℹ️ 新数据 {orig_len} 个板块，缺失 {len(missing)} 个已从缓存补全")
+                today_str = now_bjt().strftime("%Y-%m-%d")
                 if updated_at != st.session_state.get("last_concept_update"):
                     st.session_state["prev_concept_df"]     = last_df
                     st.session_state["last_concept_df"]     = new_df
                     st.session_state["last_concept_update"] = updated_at
                     if is_open:
                         save_concept_history(new_df, prev_df=last_df)
+                        st.session_state["last_saved_concept_date"] = today_str
+                elif is_open and st.session_state.get("last_saved_concept_date") != today_str:
+                    df_to_save = st.session_state.get("last_concept_df")
+                    if df_to_save is not None:
+                        save_concept_history(df_to_save)
+                        st.session_state["last_saved_concept_date"] = today_str
             except Exception as fetch_err:
                 if st.session_state.get("last_concept_df") is None:
                     st.error(f"概念数据获取失败且无缓存：{fetch_err}")
@@ -799,7 +783,7 @@ def show_main_content():
                 prev_df    = st.session_state.get("prev_concept_df")
                 updated_at = st.session_state.get("last_concept_update", "—")
                 turnover   = st.session_state.get("turnover", "—")
-                zt_total   = sum(fetch_zt_count().values())
+                zt_total   = fetch_zt_total()
                 dt_total   = fetch_dt_count()
                 render_fund_flow(df, updated_at, is_open, prev_df, turnover,
                                  zt_total=zt_total, dt_total=dt_total)
@@ -830,46 +814,49 @@ def show_main_content():
         # ── 今日子Tab ─────────────────────────────────────────
         with sub_today:
             if lhb_df is not None:
-                # 今日数据存库（每日只存一次）
-                today_str = now_bjt().strftime("%Y-%m-%d")
-                if st.session_state.get("lhb_saved_date") != today_str:
-                    save_lhb_history(lhb_df)
-                    st.session_state["lhb_saved_date"] = today_str
+                try:
+                    # 今日数据存库（每日只存一次）
+                    today_str = now_bjt().strftime("%Y-%m-%d")
+                    if st.session_state.get("lhb_saved_date") != today_str:
+                        save_lhb_history(lhb_df)
+                        st.session_state["lhb_saved_date"] = today_str
 
-                total_stocks   = lhb_df["代码"].nunique()
-                total_net_buy  = lhb_df.groupby("代码")["龙虎榜净买额"].sum()
-                top_code       = total_net_buy.idxmax() if not total_net_buy.empty else "—"
-                top_name       = lhb_df.loc[lhb_df["代码"] == top_code, "名称"].iloc[0] if top_code != "—" else "—"
+                    total_stocks  = lhb_df["代码"].nunique()
+                    net_buy_col   = "龙虎榜净买额" if "龙虎榜净买额" in lhb_df.columns else None
+                    top_code = top_name = "—"
+                    if net_buy_col:
+                        total_net_buy = lhb_df.groupby("代码")[net_buy_col].sum()
+                        if not total_net_buy.empty:
+                            top_code = total_net_buy.idxmax()
+                            matched = lhb_df.loc[lhb_df["代码"] == top_code, "名称"]
+                            top_name = matched.iloc[0] if not matched.empty else "—"
 
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("上榜股票数", f"{total_stocks} 只")
-                c2.metric("上榜记录数", f"{len(lhb_df)} 条")
-                c3.metric("净买入最强", f"{top_name}({top_code})")
-                c4.metric("数据时间", lhb_updated)
-                st.caption("同一股票可能因多个原因多次上榜，每条原因单独一行")
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("上榜股票数", f"{total_stocks} 只")
+                    c2.metric("上榜记录数", f"{len(lhb_df)} 条")
+                    c3.metric("净买入最强", f"{top_name}({top_code})")
+                    c4.metric("数据时间", lhb_updated)
+                    st.caption("同一股票可能因多个原因多次上榜，每条原因单独一行")
 
-                # 并行拉取概念板块
-                unique_codes = tuple(sorted(lhb_df["代码"].unique()))
-                concept_map = fetch_concept_tags(unique_codes)
-                lhb_df = lhb_df.copy()
-                lhb_df["概念板块"] = lhb_df["代码"].map(lambda c: concept_map.get(c, ""))
+                    show_cols = [c for c in ["代码", "名称", "上榜原因", "涨跌幅", "龙虎榜净买额",
+                                 "龙虎榜买入额", "龙虎榜卖出额", "换手率", "净买额占总成交比"] if c in lhb_df.columns]
+                    all_reasons = sorted(lhb_df["上榜原因"].dropna().unique().tolist())
+                    sel_reasons = st.multiselect("筛选上榜原因（不选则显示全部）", options=all_reasons, default=[], key="lhb_today_reason")
+                    filtered = lhb_df if not sel_reasons else lhb_df[lhb_df["上榜原因"].isin(sel_reasons)]
+                    sort_col = net_buy_col or "代码"
+                    st.dataframe(
+                        filtered[show_cols].sort_values(sort_col, ascending=False)
+                            .reset_index(drop=True)
+                            .style.format({k: v for k, v in lhb_fmt.items() if k in show_cols}),
+                        use_container_width=True, height=520,
+                    )
 
-                show_cols = [c for c in ["代码", "名称", "概念板块", "上榜原因", "涨跌幅", "龙虎榜净买额",
-                             "龙虎榜买入额", "龙虎榜卖出额", "换手率", "净买额占总成交比"] if c in lhb_df.columns]
-                all_reasons = sorted(lhb_df["上榜原因"].dropna().unique().tolist())
-                sel_reasons = st.multiselect("筛选上榜原因（不选则显示全部）", options=all_reasons, default=[], key="lhb_today_reason")
-                filtered = lhb_df if not sel_reasons else lhb_df[lhb_df["上榜原因"].isin(sel_reasons)]
-                st.dataframe(
-                    filtered[show_cols].sort_values("龙虎榜净买额", ascending=False)
-                        .reset_index(drop=True)
-                        .style.format({k: v for k, v in lhb_fmt.items() if k in show_cols}),
-                    use_container_width=True, height=520,
-                )
-
-                st.subheader("上榜原因分布")
-                reason_counts = lhb_df["上榜原因"].value_counts().reset_index()
-                reason_counts.columns = ["上榜原因", "上榜次数"]
-                st.dataframe(reason_counts, use_container_width=True, hide_index=True)
+                    st.subheader("上榜原因分布")
+                    reason_counts = lhb_df["上榜原因"].value_counts().reset_index()
+                    reason_counts.columns = ["上榜原因", "上榜次数"]
+                    st.dataframe(reason_counts, use_container_width=True, hide_index=True)
+                except Exception as lhb_today_err:
+                    st.error(f"龙虎榜今日数据展示失败：{lhb_today_err}")
 
             # 上榜原因详解
             with st.expander("📖 上榜原因详解（点击展开）"):
