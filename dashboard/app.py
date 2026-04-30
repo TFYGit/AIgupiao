@@ -200,42 +200,6 @@ def load_lhb_history() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
-def load_all_industry_history() -> dict:
-    """加载 industry_fund_history 全部历史数据（不限日期），用于频率统计"""
-    try:
-        sb = get_supabase()
-        rows = (sb.table("industry_fund_history")
-                  .select("date,industry,net_inflow")
-                  .order("date", desc=False)
-                  .limit(10000)
-                  .execute().data)
-        history: dict = {}
-        for r in rows:
-            history.setdefault(str(r["date"]), {})[r["industry"]] = r["net_inflow"]
-        return history
-    except Exception:
-        return {}
-
-
-@st.cache_data(ttl=REFRESH_INTERVAL)
-def load_all_concept_history() -> dict:
-    """加载 concept_fund_history 全部历史数据（不限日期），用于频率统计"""
-    try:
-        sb = get_supabase()
-        rows = (sb.table("concept_fund_history")
-                  .select("date,industry,net_inflow")
-                  .order("date", desc=False)
-                  .limit(10000)
-                  .execute().data)
-        history: dict = {}
-        for r in rows:
-            history.setdefault(str(r["date"]), {})[r["industry"]] = r["net_inflow"]
-        return history
-    except Exception:
-        return {}
-
-
-@st.cache_data(ttl=REFRESH_INTERVAL)
 def load_zt_dt_history() -> pd.DataFrame:
     """从 Supabase 加载近10个交易日涨停/跌停数"""
     try:
@@ -1009,9 +973,9 @@ def show_main_content():
     # ── 强势板块统计 Tab ──────────────────────────────────────
     with tab_freq:
         st.subheader("行业板块")
-        show_top20_frequency(load_all_industry_history(), "行业板块")
+        show_top20_frequency(load_history(), "行业板块")
         st.subheader("概念板块")
-        show_top20_frequency(load_all_concept_history(), "概念板块")
+        show_top20_frequency(load_concept_history(), "概念板块")
 
     # ── 涨停 / 跌停 Tab ───────────────────────────────────────
     with tab_ztdt:
