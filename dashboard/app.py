@@ -43,19 +43,22 @@ def now_bjt():
     return datetime.now(BJT)
 
 
+@st.cache_data(ttl=REFRESH_INTERVAL)
 def load_history() -> dict:
     """从 Supabase 加载近10个交易日所有板块数据，格式: {日期: {行业: 净流入}}"""
     try:
+        from datetime import date, timedelta
         sb = get_supabase()
+        start = (date.today() - timedelta(days=30)).strftime("%Y-%m-%d")
         rows = (sb.table("industry_fund_history")
                   .select("date,industry,net_inflow")
+                  .gte("date", start)
                   .order("date", desc=False)
                   .execute().data)
         history = {}
         for r in rows:
             d = str(r["date"])
             history.setdefault(d, {})[r["industry"]] = r["net_inflow"]
-        # 只取最近10个交易日
         dates = sorted(history.keys())[-10:]
         return {d: history[d] for d in dates}
     except Exception:
@@ -86,12 +89,16 @@ def save_history(df: pd.DataFrame, prev_df: pd.DataFrame = None):
         st.session_state["_save_industry_err"] = str(e)[:200]
 
 
+@st.cache_data(ttl=REFRESH_INTERVAL)
 def load_concept_history() -> dict:
     """从 Supabase 加载近10个交易日所有概念板块数据，格式: {日期: {概念: 净流入}}"""
     try:
+        from datetime import date, timedelta
         sb = get_supabase()
+        start = (date.today() - timedelta(days=30)).strftime("%Y-%m-%d")
         rows = (sb.table("concept_fund_history")
                   .select("date,industry,net_inflow")
+                  .gte("date", start)
                   .order("date", desc=False)
                   .execute().data)
         history = {}
@@ -192,12 +199,16 @@ def load_lhb_history() -> pd.DataFrame:
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=REFRESH_INTERVAL)
 def load_zt_dt_history() -> pd.DataFrame:
     """从 Supabase 加载近10个交易日涨停/跌停数"""
     try:
+        from datetime import date, timedelta
         sb = get_supabase()
+        start = (date.today() - timedelta(days=30)).strftime("%Y-%m-%d")
         rows = (sb.table("zt_dt_history")
                   .select("date,zt_count,dt_count")
+                  .gte("date", start)
                   .order("date", desc=False)
                   .execute().data)
         if not rows:
@@ -236,13 +247,6 @@ def is_auction_time() -> bool:
 _EM_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Referer": "https://data.eastmoney.com/",
-}
-_EM_URL = "https://push2.eastmoney.com/api/qt/clist/get"
-_EM_BASE = {
-    "pn": 1, "pz": 200, "po": 1, "np": 1,
-    "ut": "bd1d9ddb04089700cf9c27f6f7426281",
-    "fltt": 2, "invt": 2, "fid": "f62",
-    "fs": "m:90+t:2+f:!50",
 }
 
 
@@ -309,7 +313,7 @@ def fetch_dt_count() -> int:
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_lhb_data():
-    """获取今日龙虎榜数据"""
+    """获取今日龙虎榜数据，无数据时返回 (None, None) 而非抛异常（保证结果被缓存，避免重复阻塞）"""
     import threading
     result, error = [None], [None]
     def _run():
@@ -321,13 +325,9 @@ def fetch_lhb_data():
     t = threading.Thread(target=_run, daemon=True)
     t.start()
     t.join(30)
-    if t.is_alive():
-        raise TimeoutError("龙虎榜接口超时")
-    if error[0]:
-        raise error[0]
+    if t.is_alive() or error[0] or result[0] is None or result[0].empty:
+        return None, None
     df = result[0]
-    if df is None or df.empty:
-        raise ValueError("今日暂无龙虎榜数据")
     for col in ["龙虎榜净买额", "龙虎榜买入额", "龙虎榜卖出额", "龙虎榜成交额", "市场总成交额", "流通市值"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce") / 1e8
@@ -414,7 +414,7 @@ def fetch_concept_data():
             error[0] = e
     t = threading.Thread(target=_run, daemon=True)
     t.start()
-    t.join(90)
+    t.join(30)
     if t.is_alive():
         raise TimeoutError("概念板块资金流向接口超时，稍后重试")
     if error[0]:
@@ -614,10 +614,7 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—", zt_t
     show_df = df.copy()
     if prev_df is not None and "行业板块" in prev_df.columns:
         prev_map = prev_df.set_index("行业板块")["净流入(亿元)"].to_dict()
-        show_df["环比(亿元)"] = show_df["行业板块"].map(
-            lambda x: show_df.loc[show_df["行业板块"] == x, "净流入(亿元)"].values[0] - prev_map.get(x, float("nan"))
-            if x in prev_map else float("nan")
-        )
+        show_df["环比(亿元)"] = show_df["净流入(亿元)"] - show_df["行业板块"].map(prev_map)
         qob_up   = int((show_df["环比(亿元)"] > 0).sum())
         qob_down = int((show_df["环比(亿元)"] < 0).sum())
     else:
@@ -793,11 +790,7 @@ def show_main_content():
 
     # ── 龙虎榜 Tab ────────────────────────────────────────────
     with tab_lhb:
-        try:
-            lhb_df, lhb_updated = fetch_lhb_data()
-        except Exception as e:
-            st.error(f"龙虎榜数据获取失败：{e}")
-            lhb_df = None
+        lhb_df, lhb_updated = fetch_lhb_data()
 
         lhb_fmt = {
             "涨跌幅":           "{:+.2f}%",
@@ -813,7 +806,9 @@ def show_main_content():
 
         # ── 今日子Tab ─────────────────────────────────────────
         with sub_today:
-            if lhb_df is not None:
+            if lhb_df is None:
+                st.info("今日暂无龙虎榜数据（通常在收盘后更新）")
+            else:
                 try:
                     # 今日数据存库（每日只存一次）
                     today_str = now_bjt().strftime("%Y-%m-%d")
@@ -1088,7 +1083,8 @@ def show_zt_dt_trend(zt_today: int, dt_today: int):
 st.title("📊 板块资金流向 · 实时")
 show_main_content()
 
-# 存库错误提示（调试用，正常运行时不会出现）
+# 存库错误提示（调试用，正常运行时不会出现）；显示后立即清除，防止残留
 for _key, _label in [("_save_industry_err", "行业存库"), ("_save_concept_err", "概念存库"), ("_save_zt_dt_err", "涨跌停存库"), ("_save_lhb_err", "龙虎榜存库")]:
     if st.session_state.get(_key):
         st.error(f"[{_label}错误] {st.session_state[_key]}")
+        del st.session_state[_key]
