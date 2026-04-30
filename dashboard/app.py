@@ -741,7 +741,7 @@ def show_main_content():
     is_open    = is_market_open()
     is_auction = is_auction_time()
 
-    tab_industry, tab_concept, tab_ztdt, tab_lhb = st.tabs(["📈 行业板块", "💡 概念板块", "🔴 涨停 / 跌停", "🐉 龙虎榜"])
+    tab_industry, tab_concept, tab_ztdt, tab_lhb, tab_freq = st.tabs(["📈 行业板块", "💡 概念板块", "🔴 涨停 / 跌停", "🐉 龙虎榜", "🏆 强势板块统计"])
 
     # ── 行业板块 Tab ──────────────────────────────────────────
     with tab_industry:
@@ -800,7 +800,6 @@ def show_main_content():
                     render_fund_flow(df, updated_at, is_open, prev_df, turnover,
                                      zt_total=zt_total, dt_total=dt_total)
                     show_top5_history(df)
-                    show_top20_frequency(load_all_industry_history(), "行业板块")
             except Exception as e:
                 st.error(f"数据获取失败：{e}")
 
@@ -856,7 +855,6 @@ def show_main_content():
                 render_fund_flow(df, updated_at, is_open, prev_df, turnover,
                                  zt_total=zt_total, dt_total=dt_total)
                 show_top5_history(df, load_fn=load_concept_history)
-                show_top20_frequency(load_all_concept_history(), "概念板块")
         except Exception as e:
             st.error(f"概念数据获取失败：{e}")
 
@@ -1007,6 +1005,13 @@ def show_main_content():
                     use_container_width=True,
                     height=600,
                 )
+
+    # ── 强势板块统计 Tab ──────────────────────────────────────
+    with tab_freq:
+        st.subheader("行业板块")
+        show_top20_frequency(load_all_industry_history(), "行业板块")
+        st.subheader("概念板块")
+        show_top20_frequency(load_all_concept_history(), "概念板块")
 
     # ── 涨停 / 跌停 Tab ───────────────────────────────────────
     with tab_ztdt:
