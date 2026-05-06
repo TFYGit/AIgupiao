@@ -337,10 +337,34 @@ def fetch_lhb_data():
     return df, now_bjt().strftime("%Y-%m-%d %H:%M:%S")
 
 
-# @st.cache_data(ttl=REFRESH_INTERVAL)
-# def fetch_lhb_jg_flow() -> pd.DataFrame:
-#     """获取近30日龙虎榜机构买卖统计（已停用）"""
-#     ...
+@st.cache_data(ttl=REFRESH_INTERVAL)
+def fetch_lhb_jg_flow() -> pd.DataFrame:
+    """获取近30日龙虎榜机构买卖统计，按日期汇总返回（亿元）。失败返回空 DataFrame。"""
+    import threading
+    from datetime import date, timedelta
+    result, error = [None], [None]
+    def _run():
+        try:
+            end   = date.today().strftime("%Y%m%d")
+            start = (date.today() - timedelta(days=30)).strftime("%Y%m%d")
+            result[0] = ak.stock_lhb_jgmmtj_em(start_date=start, end_date=end)
+        except Exception as e:
+            error[0] = e
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(30)
+    if t.is_alive() or error[0] or result[0] is None or result[0].empty:
+        return pd.DataFrame()
+    df = result[0]
+    date_col = next((c for c in ["上榜日期", "上榜日", "日期"] if c in df.columns), None)
+    net_col  = next((c for c in ["机构买入净额", "机构净买额", "净买额"] if c in df.columns), None)
+    if not date_col or not net_col:
+        return pd.DataFrame()
+    df[net_col] = pd.to_numeric(df[net_col], errors="coerce") / 1e8
+    daily = df.groupby(date_col)[net_col].sum().reset_index()
+    daily.columns = ["date", "jg_net"]
+    daily["date"] = daily["date"].astype(str).str[:10]
+    return daily.sort_values("date")
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
@@ -812,9 +836,9 @@ def show_main_content():
             "成交额占总成交比": "{:.2f}%",
         }
 
-        # st.subheader("机构 vs 游资资金动向")
-        # show_lhb_flow_breakdown()
-        # st.divider()
+        st.subheader("机构 vs 游资资金动向")
+        show_lhb_flow_breakdown()
+        st.divider()
 
         sub_today, sub_history = st.tabs(["📅 今日", "📂 历史记录（近30日）"])
 
@@ -1168,11 +1192,64 @@ def show_zt_dt_trend(zt_today: int, dt_today: int):
     st.dataframe(table, use_container_width=True)
 
 
-# def show_lhb_flow_breakdown():
-#     """龙虎榜 机构 vs 游资净买入近期趋势图（已停用）"""
-#     jg_df   = fetch_lhb_jg_flow()
-#     hist_df = load_lhb_history()
-#     ...（省略）
+def show_lhb_flow_breakdown():
+    """龙虎榜 机构 vs 游资净买入近期趋势图"""
+    jg_df   = fetch_lhb_jg_flow()
+    hist_df = load_lhb_history()
+
+    if jg_df.empty or hist_df.empty:
+        st.info("暂无足够数据生成机构/游资对比图")
+        return
+
+    net_col = "龙虎榜净买额"
+    if net_col not in hist_df.columns:
+        st.info("历史数据中缺少净买额字段")
+        return
+    deduped     = hist_df.drop_duplicates(subset=["上榜日", "代码"])
+    daily_total = (deduped.groupby("上榜日")[net_col]
+                          .sum().reset_index()
+                          .rename(columns={"上榜日": "date", net_col: "total_net"}))
+
+    merged = pd.merge(daily_total, jg_df, on="date", how="inner")
+    if merged.empty:
+        st.info("机构数据与历史数据无交集，请稍后重试")
+        return
+
+    merged["yj_net"] = merged["total_net"] - merged["jg_net"]
+    merged = merged.sort_values("date", ascending=False).head(20).reset_index(drop=True)
+    merged["label"] = merged["date"].str[5:]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=merged["label"], y=merged["jg_net"], name="机构净买入",
+        marker_color="#FF8C00",
+        text=merged["jg_net"].apply(lambda v: f"{v:+.1f}"),
+        textposition="outside",
+    ))
+    fig.add_trace(go.Bar(
+        x=merged["label"], y=merged["yj_net"], name="游资净买入",
+        marker_color="#1E90FF",
+        text=merged["yj_net"].apply(lambda v: f"{v:+.1f}"),
+        textposition="outside",
+    ))
+    fig.update_layout(
+        title="龙虎榜 · 机构 vs 游资净买入（亿元，最新在左）",
+        barmode="group",
+        height=420,
+        margin=dict(t=55, b=40),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        legend=dict(orientation="h", y=1.1),
+        yaxis_title="净买入(亿元)",
+    )
+    fig.add_hline(y=0, line_color="gray", line_width=1)
+    st.plotly_chart(fig, use_container_width=True)
+
+    tbl = merged[["date", "jg_net", "yj_net", "total_net"]].rename(columns={
+        "date": "日期", "jg_net": "机构净买(亿)", "yj_net": "游资净买(亿)", "total_net": "龙虎榜合计(亿)"
+    }).set_index("日期")
+    st.dataframe(tbl.style.format("{:+.2f}"), use_container_width=True)
+    st.caption("机构 = 龙虎榜机构专用席位合计；游资 = 龙虎榜营业部席位合计（总净买 − 机构净买）")
 
 
 # ---- 页面入口 ----
