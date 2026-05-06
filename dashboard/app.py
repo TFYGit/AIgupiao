@@ -360,6 +360,10 @@ def fetch_lhb_jg_flow() -> pd.DataFrame:
     net_col  = next((c for c in ["机构买入净额", "机构净买额", "净买额"] if c in df.columns), None)
     if not date_col or not net_col:
         return pd.DataFrame()
+    # 同一股票同天可能多行（多原因），按 (日期, 代码) 去重再汇总
+    code_col = next((c for c in ["代码", "股票代码"] if c in df.columns), None)
+    if code_col:
+        df = df.drop_duplicates(subset=[date_col, code_col])
     df[net_col] = pd.to_numeric(df[net_col], errors="coerce") / 1e8
     daily = df.groupby(date_col)[net_col].sum().reset_index()
     daily.columns = ["date", "jg_net"]
