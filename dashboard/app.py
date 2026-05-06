@@ -1067,7 +1067,7 @@ def show_main_content():
                                 return pd.DataFrame()
                             agg = {"交易次数": ("代码", "count")}
                             if "成交额(亿)" in df_sub.columns:
-                                agg["合计成交额"] = ("成交额(亿)", "sum")
+                                agg["合计成交额(亿)"] = ("成交额(亿)", "sum")
                             if "锁仓信号" in df_sub.columns:
                                 agg["锁仓信号"] = ("锁仓信号", lambda x: x.mode().iloc[0] if not x.mode().empty else "")
                             return (df_sub.groupby(["代码", "名称"])
@@ -1081,7 +1081,7 @@ def show_main_content():
                             dzjy_df.get("买方营业部", pd.Series("", index=dzjy_df.index)).str.contains("机构专用", na=False) |
                             dzjy_df.get("卖方营业部", pd.Series("", index=dzjy_df.index)).str.contains("机构专用", na=False)
                         )
-                        top5_fmt = {"合计成交额": "{:.2f}"}
+                        top5_fmt = {"合计成交额(亿)": "{:.2f}"}
                         col_jg, col_yj = st.columns(2)
                         with col_jg:
                             st.subheader("机构交易次数 Top 5")
