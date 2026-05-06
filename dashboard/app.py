@@ -707,7 +707,7 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—", zt_t
         "领涨股涨跌幅%":  "{:+.2f}%",
     }
     st.dataframe(
-        show_df[display_cols].style.format({k: v for k, v in fmt.items() if k in display_cols}),
+        show_df[display_cols].style.format({k: v for k, v in fmt.items() if k in display_cols}, na_rep="—"),
         use_container_width=True,
         height=600,
     )
