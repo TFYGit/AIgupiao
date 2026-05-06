@@ -414,7 +414,7 @@ def fetch_data():
     # 全市场成交额：上证综指 + 深证成指 + 北证50
     try:
         hdrs = {"User-Agent": "Mozilla/5.0"}
-        secids = ["1.000001", "0.399001", "0.899050"]
+        secids = ["1.000001", "0.399106", "0.899050"]
         total = 0
         for s in secids:
             try:
