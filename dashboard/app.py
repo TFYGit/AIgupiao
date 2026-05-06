@@ -926,17 +926,14 @@ def show_main_content():
                     c2.metric("上榜记录数", f"{len(lhb_df)} 条")
                     c3.metric("净买入最强", f"{top_name}({top_code})")
                     c4.metric("数据时间", lhb_updated)
-                    st.caption("同一股票可能因多个原因多次上榜，每条原因单独一行")
-
-                    show_cols = [c for c in ["代码", "名称", "上榜原因", "涨跌幅", "龙虎榜净买额",
+                    show_cols = [c for c in ["代码", "名称", "涨跌幅", "龙虎榜净买额",
                                  "龙虎榜买入额", "龙虎榜卖出额", "换手率", "净买额占总成交比"] if c in lhb_df.columns]
-                    all_reasons = sorted(lhb_df["上榜原因"].dropna().unique().tolist())
-                    sel_reasons = st.multiselect("筛选上榜原因（不选则显示全部）", options=all_reasons, default=[], key="lhb_today_reason")
-                    filtered = lhb_df if not sel_reasons else lhb_df[lhb_df["上榜原因"].isin(sel_reasons)]
                     sort_col = net_buy_col or "代码"
+                    deduped_df = (lhb_df.sort_values(sort_col, ascending=False)
+                                        .drop_duplicates(subset=["代码"], keep="first")
+                                        .reset_index(drop=True))
                     st.dataframe(
-                        filtered[show_cols].sort_values(sort_col, ascending=False)
-                            .reset_index(drop=True)
+                        deduped_df[show_cols]
                             .style.format({k: v for k, v in lhb_fmt.items() if k in show_cols}),
                         use_container_width=True, height=520,
                     )
