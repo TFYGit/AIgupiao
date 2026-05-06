@@ -409,6 +409,57 @@ def fetch_lhb_jg_flow() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
+def fetch_dzjy_data() -> pd.DataFrame:
+    """获取今日大宗交易明细，失败返回空 DataFrame。"""
+    import threading
+    result, error = [None], [None]
+    def _run():
+        try:
+            today = now_bjt().strftime("%Y%m%d")
+            result[0] = ak.stock_dzjy_mrmx(symbol="A股", start_date=today, end_date=today)
+        except Exception as e:
+            error[0] = e
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(60)
+    if t.is_alive() or error[0] or result[0] is None or result[0].empty:
+        return pd.DataFrame()
+    df = result[0]
+    for col in ["折溢率", "成交额", "成交量", "收盘价", "成交价"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    if "成交额" in df.columns:
+        df["成交额(亿)"] = df["成交额"] / 1e8
+
+    mask_buy  = df["买方营业部"].str.contains("机构专用", na=False) if "买方营业部" in df.columns else pd.Series(False, index=df.index)
+    mask_sell = df["卖方营业部"].str.contains("机构专用", na=False) if "卖方营业部" in df.columns else pd.Series(False, index=df.index)
+
+    def _signal(row):
+        rate = row.get("折溢率", 0) or 0
+        bi, si = bool(row.get("_bi")), bool(row.get("_si"))
+        if bi and rate > 0:  return "机构溢价锁仓"
+        if bi and rate == 0: return "机构平价锁仓"
+        if bi and rate < 0:  return "机构折价吸筹"
+        if si and rate < 0:  return "机构折价减持"
+        if rate > 0:         return "溢价吸筹"
+        if rate == 0:        return "平价过户"
+        return "折价甩卖"
+
+    df["_bi"] = mask_buy
+    df["_si"] = mask_sell
+    df["锁仓信号"] = df.apply(_signal, axis=1)
+    df.drop(columns=["_bi", "_si"], inplace=True)
+
+    df = df.rename(columns={"证券代码": "代码", "证券简称": "名称", "折溢率": "折溢率%"})
+    keep = [c for c in ["代码", "名称", "收盘价", "成交价", "折溢率%", "成交额(亿)",
+                         "买方营业部", "卖方营业部", "锁仓信号"] if c in df.columns]
+    df = df[keep]
+    if "成交额(亿)" in df.columns:
+        df = df.sort_values("成交额(亿)", ascending=False)
+    return df.reset_index(drop=True)
+
+
+@st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_data():
     import threading
     result, error = [None], [None]
@@ -919,7 +970,7 @@ def show_main_content():
         show_lhb_flow_breakdown()
         st.divider()
 
-        sub_today, sub_history = st.tabs(["📅 今日", "📂 历史记录（近30日）"])
+        sub_today, sub_history = st.tabs(["📅 今日", "📋 大宗交易"])
 
         # ── 今日子Tab ─────────────────────────────────────────
         with sub_today:
@@ -983,41 +1034,29 @@ def show_main_content():
                 except Exception as lhb_today_err:
                     st.error(f"龙虎榜今日数据展示失败：{lhb_today_err}")
 
-        # ── 历史记录子Tab ──────────────────────────────────────
+        # ── 大宗交易子Tab ──────────────────────────────────────
         with sub_history:
-            hist_df = load_lhb_history()
-            if hist_df.empty:
-                st.info("暂无历史数据，请先运行回填脚本或等待今日数据存入。")
-            else:
-                hist_show_cols = [c for c in ["上榜日", "代码", "名称", "上榜原因", "涨跌幅",
-                                  "龙虎榜净买额", "龙虎榜买入额", "龙虎榜卖出额",
-                                  "换手率", "净买额占总成交比"] if c in hist_df.columns]
-
-                fa, fb, fc = st.columns([2, 2, 3])
-                with fa:
-                    date_options = ["全部"] + sorted(hist_df["上榜日"].dropna().unique().tolist(), reverse=True)
-                    sel_date = st.selectbox("按日期筛选", date_options, key="lhb_hist_date")
-                with fb:
-                    kw = st.text_input("股票代码 / 名称搜索", key="lhb_hist_kw")
-                with fc:
-                    hist_reasons = sorted(hist_df["上榜原因"].dropna().unique().tolist())
-                    sel_hist_reasons = st.multiselect("上榜原因", hist_reasons, default=[], key="lhb_hist_reason")
-
-                view = hist_df.copy()
-                if sel_date != "全部":
-                    view = view[view["上榜日"] == sel_date]
-                if kw:
-                    view = view[view["代码"].str.contains(kw, na=False) | view["名称"].str.contains(kw, na=False)]
-                if sel_hist_reasons:
-                    view = view[view["上榜原因"].isin(sel_hist_reasons)]
-
-                st.caption(f"共 {len(view)} 条记录")
-                st.dataframe(
-                    view[hist_show_cols].reset_index(drop=True)
-                        .style.format({k: v for k, v in lhb_fmt.items() if k in hist_show_cols}),
-                    use_container_width=True,
-                    height=600,
-                )
+            try:
+                dzjy_df = fetch_dzjy_data()
+                if dzjy_df.empty:
+                    st.info("今日暂无大宗交易数据（通常在收盘后更新）")
+                else:
+                    ca, cb = st.columns(2)
+                    ca.metric("今日大宗交易", f"{len(dzjy_df)} 笔")
+                    if "成交额(亿)" in dzjy_df.columns:
+                        cb.metric("合计成交额", f"{dzjy_df['成交额(亿)'].sum():.2f} 亿")
+                    dzjy_fmt = {}
+                    if "收盘价" in dzjy_df.columns:   dzjy_fmt["收盘价"]   = "{:.2f}"
+                    if "成交价" in dzjy_df.columns:   dzjy_fmt["成交价"]   = "{:.2f}"
+                    if "折溢率%" in dzjy_df.columns:  dzjy_fmt["折溢率%"]  = "{:.2f}%"
+                    if "成交额(亿)" in dzjy_df.columns: dzjy_fmt["成交额(亿)"] = "{:.2f}"
+                    st.dataframe(
+                        dzjy_df.style.format(dzjy_fmt),
+                        use_container_width=True,
+                        height=600,
+                    )
+            except Exception as dzjy_err:
+                st.error(f"大宗交易数据加载失败：{dzjy_err}")
 
     # ── 强势板块统计 Tab ──────────────────────────────────────
     with tab_freq:
