@@ -65,6 +65,21 @@ def load_history() -> dict:
         return {}
 
 
+def history_to_df(history: dict) -> "pd.DataFrame | None":
+    """将 load_history / load_concept_history 返回的 dict 转为最新一天的 DataFrame，用于 API 不可用时兜底显示。"""
+    if not history:
+        return None
+    latest_date = max(history.keys())
+    sectors = history[latest_date]
+    if not sectors:
+        return None
+    df = pd.DataFrame([{"行业板块": k, "净流入(亿元)": v} for k, v in sectors.items()])
+    df["净流入(亿元)"] = pd.to_numeric(df["净流入(亿元)"], errors="coerce")
+    df = df.sort_values("净流入(亿元)", ascending=False).reset_index(drop=True)
+    df.index += 1
+    return df, latest_date
+
+
 def save_history(df: pd.DataFrame, prev_df: pd.DataFrame = None):
     """把所有板块当天净流入 upsert 到 Supabase"""
     today = now_bjt().strftime("%Y-%m-%d")
@@ -767,7 +782,14 @@ def show_main_content():
                             st.session_state["last_saved_industry_date"] = today_str
                 except Exception as fetch_err:
                     if st.session_state.get("last_df") is None:
-                        st.error(f"数据获取失败且无缓存：{fetch_err}")
+                        fallback = history_to_df(load_history())
+                        if fallback is not None:
+                            fb_df, fb_date = fallback
+                            st.session_state["last_df"] = fb_df
+                            st.session_state["last_update"] = fb_date
+                            st.caption(f"⚠️ 实时数据暂不可用，显示 Supabase 历史数据（{fb_date}）")
+                        else:
+                            st.error(f"数据获取失败且无缓存：{fetch_err}")
                     else:
                         st.caption(f"⚠️ 数据刷新失败（{fetch_err}），显示上次缓存")
 
@@ -797,7 +819,15 @@ def show_main_content():
                 if new_df is None:
                     # 接口暂时不可用（结果已缓存，5分钟后自动重试），沿用旧数据
                     if st.session_state.get("last_concept_df") is None:
-                        st.warning("概念板块数据暂时不可用，稍后自动重试")
+                        # 兜底：从 Supabase 历史加载最新一天数据
+                        fallback = history_to_df(load_concept_history())
+                        if fallback is not None:
+                            fb_df, fb_date = fallback
+                            st.session_state["last_concept_df"] = fb_df
+                            st.session_state["last_concept_update"] = fb_date
+                            st.caption(f"⚠️ 实时数据暂不可用，显示 Supabase 历史数据（{fb_date}）")
+                        else:
+                            st.warning("概念板块数据暂时不可用，稍后自动重试")
                     else:
                         st.caption("⚠️ 概念数据暂时不可用，显示上次缓存")
                 else:
