@@ -645,7 +645,8 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—", zt_t
     show_df = df.copy()
 
     # 盘中斜率：基于当日每5分钟快照做线性回归（至少3个点）
-    if snapshots and len(snapshots) >= 3:
+    n_snaps = len(snapshots) if snapshots else 0
+    if n_snaps >= 3:
         def _slope(sector):
             vals = [s[sector] for s in snapshots if sector in s and s[sector] is not None]
             if len(vals) < 3:
@@ -655,6 +656,7 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—", zt_t
         slope_up   = int((show_df["斜率(亿/5min)"] > 0).sum())
         slope_down = int((show_df["斜率(亿/5min)"] < 0).sum())
     else:
+        show_df["斜率(亿/5min)"] = None  # 列始终存在，数据不足时为空
         slope_up = slope_down = None
 
     col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(8)
@@ -680,10 +682,11 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—", zt_t
     col7.metric("今日涨停", f"{zt_total} 只" if zt_total is not None else "—")
     col8.metric("今日跌停", f"{dt_total} 只" if dt_total is not None else "—")
 
+    slope_hint = f"　　斜率已积累 {n_snaps}/3 个快照{'，计算中' if n_snaps < 3 else ''}" if n_snaps < 3 else ""
     if is_open:
-        st.caption(f"最后更新：{updated_at}　　每 {REFRESH_INTERVAL // 60} 分钟自动刷新")
+        st.caption(f"最后更新：{updated_at}　　每 {REFRESH_INTERVAL // 60} 分钟自动刷新{slope_hint}")
     else:
-        st.caption(f"数据截止：{updated_at}　　非交易时段（09:00-15:30），已停止刷新")
+        st.caption(f"数据截止：{updated_at}　　非交易时段（09:00-15:30），已停止刷新{slope_hint}")
 
     st.plotly_chart(build_fund_flow_chart(df), use_container_width=True)
 
