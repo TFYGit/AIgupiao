@@ -1268,6 +1268,21 @@ def show_lhb_flow_breakdown():
                           .sum().reset_index()
                           .rename(columns={"上榜日": "date", net_col: "total_net"}))
 
+    # 今日数据用实时接口覆盖，避免 Supabase 快照与机构实时数据时间不同步
+    today = now_bjt().strftime("%Y-%m-%d")
+    rt_df, _ = fetch_lhb_data()
+    if rt_df is not None and not rt_df.empty and net_col in rt_df.columns:
+        date_col_rt = next((c for c in ["上榜日", "上榜日期", "日期"] if c in rt_df.columns), None)
+        code_col_rt = next((c for c in ["代码", "股票代码"] if c in rt_df.columns), None)
+        if date_col_rt and code_col_rt:
+            rt_deduped = rt_df.drop_duplicates(subset=[date_col_rt, code_col_rt])
+            today_total = rt_deduped[net_col].sum()
+            daily_total = daily_total[daily_total["date"] != today]
+            daily_total = pd.concat(
+                [daily_total, pd.DataFrame([{"date": today, "total_net": today_total}])],
+                ignore_index=True,
+            )
+
     merged = pd.merge(daily_total, jg_df, on="date", how="inner")
     if merged.empty:
         st.info("机构数据与历史数据无交集，请稍后重试")
