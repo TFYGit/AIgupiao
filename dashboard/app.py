@@ -1060,18 +1060,41 @@ def show_main_content():
                     if "成交额(亿)" in dzjy_df.columns:
                         cb.metric("合计成交额", f"{dzjy_df['成交额(亿)'].sum():.2f} 亿")
 
-                    # 交易次数 Top5
+                    # 机构 / 游资交易次数 Top5
                     if "代码" in dzjy_df.columns and "名称" in dzjy_df.columns:
-                        top5 = (dzjy_df.groupby(["代码", "名称"])
-                                       .agg(交易次数=("代码", "count"),
-                                            合计成交额=("成交额(亿)", "sum") if "成交额(亿)" in dzjy_df.columns else ("代码", "count"))
-                                       .reset_index()
-                                       .sort_values("交易次数", ascending=False)
-                                       .head(5)
-                                       .reset_index(drop=True))
-                        st.subheader("交易次数 Top 5")
+                        def _top5(df_sub):
+                            if df_sub.empty:
+                                return pd.DataFrame()
+                            agg = {"交易次数": ("代码", "count")}
+                            if "成交额(亿)" in df_sub.columns:
+                                agg["合计成交额"] = ("成交额(亿)", "sum")
+                            return (df_sub.groupby(["代码", "名称"])
+                                         .agg(**agg)
+                                         .reset_index()
+                                         .sort_values("交易次数", ascending=False)
+                                         .head(5)
+                                         .reset_index(drop=True))
+
+                        mask_jg = (
+                            dzjy_df.get("买方营业部", pd.Series("", index=dzjy_df.index)).str.contains("机构专用", na=False) |
+                            dzjy_df.get("卖方营业部", pd.Series("", index=dzjy_df.index)).str.contains("机构专用", na=False)
+                        )
                         top5_fmt = {"合计成交额": "{:.2f}"}
-                        st.dataframe(top5.style.format(top5_fmt), use_container_width=True, hide_index=True)
+                        col_jg, col_yj = st.columns(2)
+                        with col_jg:
+                            st.subheader("机构交易次数 Top 5")
+                            t = _top5(dzjy_df[mask_jg])
+                            if t.empty:
+                                st.info("今日无机构参与的大宗交易")
+                            else:
+                                st.dataframe(t.style.format(top5_fmt), use_container_width=True, hide_index=True)
+                        with col_yj:
+                            st.subheader("游资交易次数 Top 5")
+                            t = _top5(dzjy_df[~mask_jg])
+                            if t.empty:
+                                st.info("今日无游资参与的大宗交易")
+                            else:
+                                st.dataframe(t.style.format(top5_fmt), use_container_width=True, hide_index=True)
 
                     st.subheader("全部明细")
                     dzjy_fmt = {}
