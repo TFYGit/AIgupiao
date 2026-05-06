@@ -1048,7 +1048,7 @@ def show_main_content():
                     dzjy_fmt = {}
                     if "收盘价" in dzjy_df.columns:   dzjy_fmt["收盘价"]   = "{:.2f}"
                     if "成交价" in dzjy_df.columns:   dzjy_fmt["成交价"]   = "{:.2f}"
-                    if "折溢率%" in dzjy_df.columns:  dzjy_fmt["折溢率%"]  = "{:.2f}%"
+                    if "折溢率%" in dzjy_df.columns:  dzjy_fmt["折溢率%"]  = "{:.2%}"
                     if "成交额(亿)" in dzjy_df.columns: dzjy_fmt["成交额(亿)"] = "{:.2f}"
                     st.dataframe(
                         dzjy_df.style.format(dzjy_fmt),
