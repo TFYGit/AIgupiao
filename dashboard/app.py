@@ -445,7 +445,7 @@ def fetch_concept_data():
             error[0] = e
     t = threading.Thread(target=_run, daemon=True)
     t.start()
-    t.join(60)
+    t.join(90)
     if t.is_alive() or error[0] or result[0] is None or result[0].empty:
         return None, None
     df = result[0]
