@@ -1293,6 +1293,7 @@ def show_lhb_flow_breakdown():
     fig.update_layout(
         title="龙虎榜 · 机构 vs 游资净买入（亿元，最新在左）",
         barmode="group",
+        xaxis_type="category",
         height=420,
         margin=dict(t=55, b=40),
         plot_bgcolor="rgba(0,0,0,0)",
