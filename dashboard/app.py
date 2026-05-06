@@ -1068,6 +1068,8 @@ def show_main_content():
                             agg = {"交易次数": ("代码", "count")}
                             if "成交额(亿)" in df_sub.columns:
                                 agg["合计成交额"] = ("成交额(亿)", "sum")
+                            if "锁仓信号" in df_sub.columns:
+                                agg["锁仓信号"] = ("锁仓信号", lambda x: x.mode().iloc[0] if not x.mode().empty else "")
                             return (df_sub.groupby(["代码", "名称"])
                                          .agg(**agg)
                                          .reset_index()
