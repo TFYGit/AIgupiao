@@ -387,6 +387,32 @@ def fetch_lhb_jg_flow() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
+def fetch_lhb_jg_stock() -> pd.DataFrame:
+    """获取今日龙虎榜各股票机构净买额（亿元），用于拆分机构 vs 游资。"""
+    import threading
+    result, error = [None], [None]
+    def _run():
+        try:
+            today = now_bjt().strftime("%Y%m%d")
+            result[0] = ak.stock_lhb_jgmmtj_em(start_date=today, end_date=today)
+        except Exception as e:
+            error[0] = e
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(30)
+    if t.is_alive() or error[0] or result[0] is None or result[0].empty:
+        return pd.DataFrame()
+    df = result[0]
+    code_col = next((c for c in ["代码", "股票代码"] if c in df.columns), None)
+    net_col  = next((c for c in ["机构买入净额", "机构净买额", "净买额"] if c in df.columns), None)
+    if not code_col or not net_col:
+        return pd.DataFrame()
+    df[net_col] = pd.to_numeric(df[net_col], errors="coerce") / 1e8
+    df = df.drop_duplicates(subset=[code_col])
+    return df[[code_col, net_col]].rename(columns={code_col: "代码", net_col: "机构净买额_raw"})
+
+
+@st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_data():
     import threading
     result, error = [None], [None]
@@ -926,15 +952,35 @@ def show_main_content():
                     c2.metric("上榜记录数", f"{len(lhb_df)} 条")
                     c3.metric("净买入最强", f"{top_name}({top_code})")
                     c4.metric("数据时间", lhb_updated)
-                    show_cols = [c for c in ["代码", "名称", "涨跌幅", "龙虎榜净买额",
-                                 "龙虎榜买入额", "龙虎榜卖出额", "换手率", "净买额占总成交比"] if c in lhb_df.columns]
                     sort_col = net_buy_col or "代码"
                     deduped_df = (lhb_df.sort_values(sort_col, ascending=False)
                                         .drop_duplicates(subset=["代码"], keep="first")
                                         .reset_index(drop=True))
+
+                    # 合并机构净买额，计算游资净买入
+                    jg_stock = fetch_lhb_jg_stock()
+                    if not jg_stock.empty:
+                        deduped_df = deduped_df.merge(jg_stock, on="代码", how="left")
+                    else:
+                        deduped_df["机构净买额_raw"] = float("nan")
+
+                    def _fmt_net(v):
+                        return "-" if pd.isna(v) else f"{v:+.2f}"
+
+                    deduped_df["机构净买入"] = deduped_df["机构净买额_raw"].apply(_fmt_net)
+                    yj = deduped_df["龙虎榜净买额"] - deduped_df["机构净买额_raw"].fillna(0)
+                    # 机构不在榜时游资 = 龙虎榜净买额；机构在榜且游资为0则显示 "-"
+                    deduped_df["游资净买入"] = deduped_df.apply(
+                        lambda r: f"{r['龙虎榜净买额']:+.2f}" if pd.isna(r["机构净买额_raw"])
+                                  else ("-" if abs(yj[r.name]) < 0.001 else f"{yj[r.name]:+.2f}"),
+                        axis=1,
+                    )
+
+                    show_cols = [c for c in ["代码", "名称", "涨跌幅", "机构净买入", "游资净买入",
+                                 "换手率", "净买额占总成交比"] if c in deduped_df.columns]
+                    fmt = {k: v for k, v in lhb_fmt.items() if k in show_cols}
                     st.dataframe(
-                        deduped_df[show_cols]
-                            .style.format({k: v for k, v in lhb_fmt.items() if k in show_cols}),
+                        deduped_df[show_cols].style.format(fmt),
                         use_container_width=True, height=520,
                     )
 
