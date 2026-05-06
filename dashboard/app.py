@@ -701,7 +701,7 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—", zt_t
         "净流入率%":      "{:+.2f}%",
         "成交额(亿元)":   "{:.2f}",
         "净流入(亿元)":   "{:+.2f}",
-        "斜率(亿/5min)":  "{:+.2f}",
+        "斜率(亿/5min)":  lambda x: f"{x:+.2f}" if x is not None and not pd.isna(x) else "—",
         "流入(亿元)":     "{:.2f}",
         "流出(亿元)":     "{:.2f}",
         "领涨股涨跌幅%":  "{:+.2f}%",
