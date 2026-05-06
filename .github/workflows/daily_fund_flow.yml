@@ -1,0 +1,27 @@
+name: 每日板块资金流向存库
+
+on:
+  schedule:
+    - cron: '45 7 * * 1-5'   # 北京时间 15:45（UTC+8），周一至周五
+  workflow_dispatch:           # 允许手动触发（可指定任意日期补跑）
+
+jobs:
+  save-fund-flow:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 保存板块资金流向
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python save_fund_flow.py
