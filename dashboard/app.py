@@ -328,28 +328,50 @@ def fetch_dt_count() -> int:
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_lhb_data():
-    """获取今日龙虎榜数据，无数据时返回 (None, None) 而非抛异常（保证结果被缓存，避免重复阻塞）"""
+    """获取今日龙虎榜明细 + 机构净买统计，并发拉取，返回 (df, jg_df, timestamp)。失败时对应值为 None/空 DataFrame。"""
     import threading
-    result, error = [None], [None]
-    def _run():
+    today = now_bjt().strftime("%Y%m%d")
+    detail_res, detail_err = [None], [None]
+    jg_res, jg_err = [None], [None]
+
+    def _run_detail():
         try:
-            today = now_bjt().strftime("%Y%m%d")
-            result[0] = ak.stock_lhb_detail_em(start_date=today, end_date=today)
+            detail_res[0] = ak.stock_lhb_detail_em(start_date=today, end_date=today)
         except Exception as e:
-            error[0] = e
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    t.join(30)
-    if t.is_alive() or error[0] or result[0] is None or result[0].empty:
-        return None, None
-    df = result[0]
+            detail_err[0] = e
+
+    def _run_jg():
+        try:
+            jg_res[0] = ak.stock_lhb_jgmmtj_em(start_date=today, end_date=today)
+        except Exception as e:
+            jg_err[0] = e
+
+    t1 = threading.Thread(target=_run_detail, daemon=True)
+    t2 = threading.Thread(target=_run_jg, daemon=True)
+    t1.start(); t2.start()
+    t1.join(30); t2.join(30)
+
+    if t1.is_alive() or detail_err[0] or detail_res[0] is None or detail_res[0].empty:
+        return None, pd.DataFrame(), None
+    df = detail_res[0]
     for col in ["龙虎榜净买额", "龙虎榜买入额", "龙虎榜卖出额", "龙虎榜成交额", "市场总成交额", "流通市值"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce") / 1e8
     for col in ["涨跌幅", "换手率", "净买额占总成交比", "成交额占总成交比"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-    return df, now_bjt().strftime("%Y-%m-%d %H:%M:%S")
+
+    jg_df = pd.DataFrame()
+    if not t2.is_alive() and not jg_err[0] and jg_res[0] is not None and not jg_res[0].empty:
+        raw = jg_res[0]
+        code_col = next((c for c in ["代码", "股票代码"] if c in raw.columns), None)
+        net_col  = next((c for c in ["机构买入净额", "机构净买额", "净买额"] if c in raw.columns), None)
+        if code_col and net_col:
+            raw[net_col] = pd.to_numeric(raw[net_col], errors="coerce") / 1e8
+            raw = raw.drop_duplicates(subset=[code_col])
+            jg_df = raw[[code_col, net_col]].rename(columns={code_col: "代码", net_col: "机构净买额_raw"})
+
+    return df, jg_df, now_bjt().strftime("%Y-%m-%d %H:%M:%S")
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
@@ -384,32 +406,6 @@ def fetch_lhb_jg_flow() -> pd.DataFrame:
     daily.columns = ["date", "jg_net"]
     daily["date"] = daily["date"].astype(str).str[:10]
     return daily.sort_values("date")
-
-
-@st.cache_data(ttl=REFRESH_INTERVAL)
-def fetch_lhb_jg_stock() -> pd.DataFrame:
-    """获取今日龙虎榜各股票机构净买额（亿元），用于拆分机构 vs 游资。"""
-    import threading
-    result, error = [None], [None]
-    def _run():
-        try:
-            today = now_bjt().strftime("%Y%m%d")
-            result[0] = ak.stock_lhb_jgmmtj_em(start_date=today, end_date=today)
-        except Exception as e:
-            error[0] = e
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    t.join(30)
-    if t.is_alive() or error[0] or result[0] is None or result[0].empty:
-        return pd.DataFrame()
-    df = result[0]
-    code_col = next((c for c in ["代码", "股票代码"] if c in df.columns), None)
-    net_col  = next((c for c in ["机构买入净额", "机构净买额", "净买额"] if c in df.columns), None)
-    if not code_col or not net_col:
-        return pd.DataFrame()
-    df[net_col] = pd.to_numeric(df[net_col], errors="coerce") / 1e8
-    df = df.drop_duplicates(subset=[code_col])
-    return df[[code_col, net_col]].rename(columns={code_col: "代码", net_col: "机构净买额_raw"})
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
@@ -907,7 +903,7 @@ def show_main_content():
 
     # ── 龙虎榜 Tab ────────────────────────────────────────────
     with tab_lhb:
-        lhb_df, lhb_updated = fetch_lhb_data()
+        lhb_df, lhb_jg_stock, lhb_updated = fetch_lhb_data()
 
         lhb_fmt = {
             "涨跌幅":           "{:+.2f}%",
@@ -958,7 +954,7 @@ def show_main_content():
                                         .reset_index(drop=True))
 
                     # 合并机构净买额，计算游资净买入
-                    jg_stock = fetch_lhb_jg_stock()
+                    jg_stock = lhb_jg_stock
                     if not jg_stock.empty:
                         deduped_df = deduped_df.merge(jg_stock, on="代码", how="left")
                     else:
@@ -1266,7 +1262,7 @@ def show_lhb_flow_breakdown():
 
     # 今日数据用实时接口覆盖，避免 Supabase 快照与机构实时数据时间不同步
     today = now_bjt().strftime("%Y-%m-%d")
-    rt_df, _ = fetch_lhb_data()
+    rt_df, _, _ = fetch_lhb_data()
     if rt_df is not None and not rt_df.empty and net_col in rt_df.columns:
         date_col_rt = next((c for c in ["上榜日", "上榜日期", "日期"] if c in rt_df.columns), None)
         code_col_rt = next((c for c in ["代码", "股票代码"] if c in rt_df.columns), None)
