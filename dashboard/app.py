@@ -1176,6 +1176,7 @@ def show_zt_dt_trend(zt_today: int, dt_today: int):
     fig.update_layout(
         title="近10日涨停 / 跌停家数",
         barmode="group",
+        xaxis_type="category",
         height=360,
         margin=dict(t=50, b=40),
         plot_bgcolor="rgba(0,0,0,0)",
