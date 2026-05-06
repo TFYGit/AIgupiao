@@ -356,12 +356,12 @@ def fetch_lhb_data():
 def fetch_lhb_jg_flow() -> pd.DataFrame:
     """获取近30日龙虎榜机构买卖统计，按日期汇总返回（亿元）。失败返回空 DataFrame。"""
     import threading
-    from datetime import date, timedelta
+    from datetime import timedelta
     result, error = [None], [None]
     def _run():
         try:
-            end   = date.today().strftime("%Y%m%d")
-            start = (date.today() - timedelta(days=30)).strftime("%Y%m%d")
+            end   = now_bjt().strftime("%Y%m%d")
+            start = (now_bjt() - timedelta(days=30)).strftime("%Y%m%d")
             result[0] = ak.stock_lhb_jgmmtj_em(start_date=start, end_date=end)
         except Exception as e:
             error[0] = e
