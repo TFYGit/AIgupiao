@@ -640,30 +640,20 @@ def render_auction(df):
     )
 
 
-def _calc_slope(history: dict, sector: str, today_val: float, today: str) -> "float | None":
-    """用历史+今日净流入数据线性回归，返回斜率（亿/日）。少于3个点返回 None。"""
-    import numpy as np
-    dates = sorted(d for d in history.keys() if d != today)
-    vals  = [float(history[d][sector]) for d in dates if history[d].get(sector) is not None]
-    vals.append(today_val)
-    if len(vals) < 3:
-        return None
-    slope = np.polyfit(range(len(vals)), vals, 1)[0]
-    return round(float(slope), 2)
-
-
-def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—", zt_total=None, dt_total=None, history=None):
+def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—", zt_total=None, dt_total=None, snapshots=None):
     import numpy as np
     show_df = df.copy()
-    today   = now_bjt().strftime("%Y-%m-%d")
 
-    # 计算斜率
-    if history:
-        show_df["斜率(亿/日)"] = show_df.apply(
-            lambda r: _calc_slope(history, r["行业板块"], r["净流入(亿元)"], today), axis=1
-        )
-        slope_up   = int((show_df["斜率(亿/日)"] > 0).sum())
-        slope_down = int((show_df["斜率(亿/日)"] < 0).sum())
+    # 盘中斜率：基于当日每5分钟快照做线性回归（至少3个点）
+    if snapshots and len(snapshots) >= 3:
+        def _slope(sector):
+            vals = [s[sector] for s in snapshots if sector in s and s[sector] is not None]
+            if len(vals) < 3:
+                return None
+            return round(float(np.polyfit(range(len(vals)), vals, 1)[0]), 2)
+        show_df["斜率(亿/5min)"] = show_df["行业板块"].apply(_slope)
+        slope_up   = int((show_df["斜率(亿/5min)"] > 0).sum())
+        slope_down = int((show_df["斜率(亿/5min)"] < 0).sum())
     else:
         slope_up = slope_down = None
 
@@ -700,18 +690,18 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—", zt_t
     st.subheader("详细数据")
 
     display_cols = [c for c in [
-        "行业板块", "涨跌幅%", "成交额(亿元)", "净流入(亿元)", "净流入率%", "斜率(亿/日)",
+        "行业板块", "涨跌幅%", "成交额(亿元)", "净流入(亿元)", "净流入率%", "斜率(亿/5min)",
         "流入(亿元)", "流出(亿元)", "涨停数", "领涨股", "领涨股涨跌幅%"
     ] if c in show_df.columns]
     fmt = {
-        "涨跌幅%":      "{:+.2f}%",
-        "净流入率%":    "{:+.2f}%",
-        "成交额(亿元)": "{:.2f}",
-        "净流入(亿元)": "{:+.2f}",
-        "斜率(亿/日)":  "{:+.2f}",
-        "流入(亿元)":   "{:.2f}",
-        "流出(亿元)":   "{:.2f}",
-        "领涨股涨跌幅%":"{:+.2f}%",
+        "涨跌幅%":        "{:+.2f}%",
+        "净流入率%":      "{:+.2f}%",
+        "成交额(亿元)":   "{:.2f}",
+        "净流入(亿元)":   "{:+.2f}",
+        "斜率(亿/5min)":  "{:+.2f}",
+        "流入(亿元)":     "{:.2f}",
+        "流出(亿元)":     "{:.2f}",
+        "领涨股涨跌幅%":  "{:+.2f}%",
     }
     st.dataframe(
         show_df[display_cols].style.format({k: v for k, v in fmt.items() if k in display_cols}),
@@ -754,6 +744,12 @@ def show_main_content():
                         st.session_state["last_df"]     = new_df
                         st.session_state["last_update"] = updated_at
                         st.session_state["turnover"]    = turnover
+                        # 盘中快照：换日清零，追加当前5分钟数据
+                        if st.session_state.get("intraday_snap_date") != today_str:
+                            st.session_state["intraday_snapshots"]  = []
+                            st.session_state["intraday_snap_date"]  = today_str
+                        snap = new_df.set_index("行业板块")["净流入(亿元)"].to_dict()
+                        st.session_state["intraday_snapshots"].append(snap)
                         if is_open:
                             save_history(new_df, prev_df=last_df)
                             st.session_state["last_saved_industry_date"] = today_str
@@ -783,7 +779,7 @@ def show_main_content():
                     dt_total   = fetch_dt_count()
                     render_fund_flow(df, updated_at, is_open, prev_df, turnover,
                                      zt_total=zt_total, dt_total=dt_total,
-                                     history=load_history())
+                                     snapshots=st.session_state.get("intraday_snapshots", []))
                     show_top5_history(df)
             except Exception as e:
                 st.error(f"数据获取失败：{e}")
@@ -814,6 +810,12 @@ def show_main_content():
                         st.session_state["prev_concept_df"]     = last_df
                         st.session_state["last_concept_df"]     = new_df
                         st.session_state["last_concept_update"] = updated_at
+                        # 概念板块盘中快照
+                        if st.session_state.get("concept_snap_date") != today_str:
+                            st.session_state["concept_snapshots"] = []
+                            st.session_state["concept_snap_date"] = today_str
+                        snap = new_df.set_index("行业板块")["净流入(亿元)"].to_dict()
+                        st.session_state["concept_snapshots"].append(snap)
                         if is_open:
                             save_concept_history(new_df, prev_df=last_df)
                             st.session_state["last_saved_concept_date"] = today_str
@@ -839,7 +841,7 @@ def show_main_content():
                 dt_total   = fetch_dt_count()
                 render_fund_flow(df, updated_at, is_open, prev_df, turnover,
                                  zt_total=zt_total, dt_total=dt_total,
-                                 history=load_concept_history())
+                                 snapshots=st.session_state.get("concept_snapshots", []))
                 show_top5_history(df, load_fn=load_concept_history)
         except Exception as e:
             st.error(f"概念数据获取失败：{e}")
