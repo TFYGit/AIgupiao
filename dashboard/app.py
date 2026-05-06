@@ -24,12 +24,26 @@ st.set_page_config(
     layout="wide",
 )
 
-REFRESH_INTERVAL = 300       # 5分钟
-AUCTION_INTERVAL = 60        # 集合竞价1分钟刷新
 MARKET_OPEN   = (9,  0)
 AUCTION_START = (9, 15)
 AUCTION_END   = (9, 25)
 MARKET_CLOSE  = (15, 30)
+AUCTION_INTERVAL = 60        # 集合竞价1分钟刷新
+
+
+def is_trading_time() -> bool:
+    """判断当前是否为A股交易时间（周一至周五 9:00-15:30 北京时间）"""
+    now = datetime.now(BJT)
+    if now.weekday() >= 5:
+        return False
+    h, m = now.hour, now.minute
+    return (MARKET_OPEN[0] * 60 + MARKET_OPEN[1]
+            <= h * 60 + m <=
+            MARKET_CLOSE[0] * 60 + MARKET_CLOSE[1])
+
+
+# 交易时间内5分钟刷新；非交易时间8小时TTL，避免无效请求
+REFRESH_INTERVAL = 300 if is_trading_time() else 3600 * 8
 
 
 @st.cache_resource
@@ -1359,6 +1373,11 @@ def show_lhb_flow_breakdown():
 
 # ---- 页面入口 ----
 st.title("📊 板块资金流向 · 实时")
+if is_trading_time():
+    st.caption(f"交易时间中，数据每 {REFRESH_INTERVAL // 60} 分钟自动刷新")
+else:
+    now_str = datetime.now(BJT).strftime("%H:%M")
+    st.caption(f"非交易时间（当前 {now_str}），显示最近一次交易日数据，不自动刷新")
 show_main_content()
 
 # 存库错误提示（调试用，正常运行时不会出现）；显示后立即清除，防止残留
