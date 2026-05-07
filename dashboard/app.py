@@ -843,18 +843,10 @@ def show_main_content():
                             st.session_state["intraday_snap_date"]  = today_str
                         snap = new_df.set_index("行业板块")["净流入(亿元)"].to_dict()
                         st.session_state["intraday_snapshots"].append(snap)
-                        if is_open:
-                            save_history(new_df, prev_df=last_df)
-                            st.session_state["last_saved_industry_date"] = today_str
-                            zt_snap = fetch_zt_total()
-                            dt_snap = fetch_dt_count()
-                            save_zt_dt_history(zt_snap, dt_snap)
-                    elif is_open and st.session_state.get("last_saved_industry_date") != today_str:
-                        # 保底：当日尚未存过则补存一次（应对 Streamlit 重启后缓存 updated_at 未变化的情况）
-                        df_to_save = st.session_state.get("last_df")
-                        if df_to_save is not None:
-                            save_history(df_to_save)
-                            st.session_state["last_saved_industry_date"] = today_str
+                        save_history(new_df, prev_df=last_df)
+                        zt_snap = fetch_zt_total()
+                        dt_snap = fetch_dt_count()
+                        save_zt_dt_history(zt_snap, dt_snap)
                 except Exception as fetch_err:
                     if st.session_state.get("last_df") is None:
                         fallback = history_to_df(load_history())
@@ -924,14 +916,7 @@ def show_main_content():
                             st.session_state["concept_snap_date"] = today_str
                         snap = new_df.set_index("行业板块")["净流入(亿元)"].to_dict()
                         st.session_state["concept_snapshots"].append(snap)
-                        if is_open:
-                            save_concept_history(new_df, prev_df=last_df)
-                            st.session_state["last_saved_concept_date"] = today_str
-                    elif is_open and st.session_state.get("last_saved_concept_date") != today_str:
-                        df_to_save = st.session_state.get("last_concept_df")
-                        if df_to_save is not None:
-                            save_concept_history(df_to_save)
-                            st.session_state["last_saved_concept_date"] = today_str
+                        save_concept_history(new_df, prev_df=last_df)
             except Exception as fetch_err:
                 if st.session_state.get("last_concept_df") is None:
                     st.error(f"概念数据获取失败且无缓存：{fetch_err}")
