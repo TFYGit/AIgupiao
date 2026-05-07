@@ -58,22 +58,31 @@ def now_bjt():
 
 
 def load_history() -> dict:
-    """从 Supabase 加载近10个交易日所有板块数据，格式: {日期: {行业: 净流入}}"""
+    """从 Supabase 分页加载近10个交易日所有板块数据，格式: {日期: {行业: 净流入}}"""
     try:
         from datetime import date, timedelta
         sb = get_supabase()
         start = (date.today() - timedelta(days=30)).strftime("%Y-%m-%d")
-        # 降序+大limit：确保最近日期的数据完整，不被1000行默认上限截断
-        rows = (sb.table("industry_fund_history")
-                  .select("date,industry,net_inflow")
-                  .gte("date", start)
-                  .order("date", desc=True)
-                  .limit(2000)
-                  .execute().data)
         history = {}
-        for r in rows:
-            d = str(r["date"])
-            history.setdefault(d, {})[r["industry"]] = r["net_inflow"]
+        page_size = 1000
+        offset = 0
+        while True:
+            rows = (sb.table("industry_fund_history")
+                      .select("date,industry,net_inflow")
+                      .gte("date", start)
+                      .order("date", desc=True)
+                      .range(offset, offset + page_size - 1)
+                      .execute().data)
+            if not rows:
+                break
+            for r in rows:
+                d = str(r["date"])
+                history.setdefault(d, {})[r["industry"]] = r["net_inflow"]
+            if len(rows) < page_size:
+                break
+            if len(history) >= 11:
+                break
+            offset += page_size
         dates = sorted(history.keys())[-10:]
         return {d: history[d] for d in dates}
     except Exception:
@@ -120,21 +129,32 @@ def save_history(df: pd.DataFrame, prev_df: pd.DataFrame = None):
 
 
 def load_concept_history() -> dict:
-    """从 Supabase 加载近10个交易日所有概念板块数据，格式: {日期: {概念: 净流入}}"""
+    """从 Supabase 分页加载近10个交易日所有概念板块数据，格式: {日期: {概念: 净流入}}"""
     try:
         from datetime import date, timedelta
         sb = get_supabase()
         start = (date.today() - timedelta(days=30)).strftime("%Y-%m-%d")
-        rows = (sb.table("concept_fund_history")
-                  .select("date,industry,net_inflow")
-                  .gte("date", start)
-                  .order("date", desc=True)
-                  .limit(5000)
-                  .execute().data)
         history = {}
-        for r in rows:
-            d = str(r["date"])
-            history.setdefault(d, {})[r["industry"]] = r["net_inflow"]
+        page_size = 1000
+        offset = 0
+        while True:
+            rows = (sb.table("concept_fund_history")
+                      .select("date,industry,net_inflow")
+                      .gte("date", start)
+                      .order("date", desc=True)
+                      .range(offset, offset + page_size - 1)
+                      .execute().data)
+            if not rows:
+                break
+            for r in rows:
+                d = str(r["date"])
+                history.setdefault(d, {})[r["industry"]] = r["net_inflow"]
+            if len(rows) < page_size:
+                break
+            # 已有11个日期说明前10个日期的数据已完整，可以停止
+            if len(history) >= 11:
+                break
+            offset += page_size
         dates = sorted(history.keys())[-10:]
         return {d: history[d] for d in dates}
     except Exception:
