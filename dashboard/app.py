@@ -57,17 +57,18 @@ def now_bjt():
     return datetime.now(BJT)
 
 
-@st.cache_data(ttl=300)
 def load_history() -> dict:
     """从 Supabase 加载近10个交易日所有板块数据，格式: {日期: {行业: 净流入}}"""
     try:
         from datetime import date, timedelta
         sb = get_supabase()
         start = (date.today() - timedelta(days=30)).strftime("%Y-%m-%d")
+        # 降序+大limit：确保最近日期的数据完整，不被1000行默认上限截断
         rows = (sb.table("industry_fund_history")
                   .select("date,industry,net_inflow")
                   .gte("date", start)
-                  .order("date", desc=False)
+                  .order("date", desc=True)
+                  .limit(2000)
                   .execute().data)
         history = {}
         for r in rows:
@@ -118,7 +119,6 @@ def save_history(df: pd.DataFrame, prev_df: pd.DataFrame = None):
         st.session_state["_save_industry_err"] = str(e)[:200]
 
 
-@st.cache_data(ttl=300)
 def load_concept_history() -> dict:
     """从 Supabase 加载近10个交易日所有概念板块数据，格式: {日期: {概念: 净流入}}"""
     try:
@@ -128,7 +128,8 @@ def load_concept_history() -> dict:
         rows = (sb.table("concept_fund_history")
                   .select("date,industry,net_inflow")
                   .gte("date", start)
-                  .order("date", desc=False)
+                  .order("date", desc=True)
+                  .limit(2000)
                   .execute().data)
         history = {}
         for r in rows:
@@ -1158,12 +1159,15 @@ def show_top5_history(current_df: pd.DataFrame, load_fn=None):
     st.subheader("净流入TOP5 · 近10日统计（亿元）")
 
     def fmt(v):
-        if v is None or (isinstance(v, float) and pd.isna(v)):
+        try:
+            if v is None or pd.isna(v):
+                return "—"
+        except (TypeError, ValueError):
             return "—"
         return f"{v:+.2f}"
 
     st.dataframe(
-        table_df.style.format(fmt),
+        table_df.style.format(fmt, na_rep="—"),
         use_container_width=True,
     )
 
@@ -1185,7 +1189,7 @@ def show_top5_history(current_df: pd.DataFrame, load_fn=None):
 
     st.subheader("净流出TOP5 · 近10日统计（亿元）")
     st.dataframe(
-        bot_df.style.format(fmt),
+        bot_df.style.format(fmt, na_rep="—"),
         use_container_width=True,
     )
 
@@ -1208,7 +1212,7 @@ def show_top5_history(current_df: pd.DataFrame, load_fn=None):
 
     st.subheader("近10日合计净流入TOP5（亿元）")
     st.dataframe(
-        top5_sum_df.style.format(fmt),
+        top5_sum_df.style.format(fmt, na_rep="—"),
         use_container_width=True,
     )
 
