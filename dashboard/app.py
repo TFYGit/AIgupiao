@@ -129,7 +129,7 @@ def load_concept_history() -> dict:
                   .select("date,industry,net_inflow")
                   .gte("date", start)
                   .order("date", desc=True)
-                  .limit(2000)
+                  .limit(5000)
                   .execute().data)
         history = {}
         for r in rows:
