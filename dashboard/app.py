@@ -406,7 +406,7 @@ def fetch_lhb_data():
     return df, jg_df, now_bjt().strftime("%Y-%m-%d %H:%M:%S")
 
 
-@st.cache_data(ttl=REFRESH_INTERVAL)
+@st.cache_data(ttl=_lhb_ttl())
 def fetch_lhb_jg_flow() -> pd.DataFrame:
     """获取近30日龙虎榜机构买卖统计，按日期汇总返回（亿元）。失败返回空 DataFrame。"""
     import threading
@@ -440,7 +440,7 @@ def fetch_lhb_jg_flow() -> pd.DataFrame:
     return daily.sort_values("date")
 
 
-@st.cache_data(ttl=REFRESH_INTERVAL)
+@st.cache_data(ttl=_lhb_ttl())
 def fetch_dzjy_data() -> pd.DataFrame:
     """获取今日大宗交易明细，失败返回空 DataFrame。"""
     import threading
