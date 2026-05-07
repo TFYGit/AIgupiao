@@ -1218,7 +1218,7 @@ def show_top5_history(current_df: pd.DataFrame, load_fn=None):
 
 
 def show_top20_frequency(history: dict, title_prefix: str = "行业板块"):
-    """展示历史上净流入TOP20中出现频率最高的板块（横向柱状图 + 明细表）"""
+    """展示历史上净流入TOP5中出现频率最高的板块（竖向柱状图 + 明细表）"""
     if not history:
         st.info("暂无足够历史数据")
         return
@@ -1231,7 +1231,7 @@ def show_top20_frequency(history: dict, title_prefix: str = "行业板块"):
     for sectors in history.values():
         if not sectors:
             continue
-        top20 = sorted(sectors.items(), key=lambda x: x[1] if x[1] is not None else -999, reverse=True)[:20]
+        top20 = sorted(sectors.items(), key=lambda x: x[1] if x[1] is not None else -999, reverse=True)[:5]
         for s, v in top20:
             counter[s] += 1
             net_sum[s] = net_sum.get(s, 0) + (v or 0)
@@ -1250,24 +1250,24 @@ def show_top20_frequency(history: dict, title_prefix: str = "行业板块"):
     ])
 
     st.divider()
-    st.subheader(f"{title_prefix} · 净流入TOP20出现频率（全量历史，共 {total_days} 个交易日）")
+    st.subheader(f"{title_prefix} · 净流入TOP5出现频率（近 {total_days} 个交易日）")
 
-    top_df = freq_df.head(20).iloc[::-1].reset_index(drop=True)
+    top_df = freq_df.head(20).reset_index(drop=True)
     fig = go.Figure(go.Bar(
-        y=top_df["板块名称"],
-        x=top_df["上榜次数(天)"],
-        orientation="h",
+        x=top_df["板块名称"],
+        y=top_df["上榜次数(天)"],
         marker_color="#ef5350",
         text=top_df.apply(lambda r: f"{int(r['上榜次数(天)'])}天 ({r['上榜率%']}%)", axis=1),
         textposition="outside",
-        hovertemplate="<b>%{y}</b><br>上榜次数: %{x} 天<extra></extra>",
+        hovertemplate="<b>%{x}</b><br>上榜次数: %{y} 天<extra></extra>",
     ))
     fig.update_layout(
-        height=600,
-        margin=dict(t=30, b=30, l=10, r=120),
+        height=500,
+        margin=dict(t=50, b=10, l=10, r=10),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        xaxis_title="出现天数",
+        yaxis_title="出现天数",
+        xaxis_tickangle=-30,
     )
     st.plotly_chart(fig, use_container_width=True)
 
