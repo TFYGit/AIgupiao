@@ -303,21 +303,9 @@ def fetch_zt_count() -> dict:
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_zt_total() -> int:
-    """直接查涨停池，返回今日涨停总家数"""
-    import threading
-    result, error = [None], [None]
-    def _run():
-        try:
-            today = now_bjt().strftime("%Y%m%d")
-            result[0] = ak.stock_zt_pool_em(date=today)
-        except Exception as e:
-            error[0] = e
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    t.join(15)
-    if t.is_alive() or error[0] or result[0] is None or result[0].empty:
-        return 0
-    return len(result[0])
+    """复用已缓存的fetch_zt_count，避免重复调API"""
+    zt_map = fetch_zt_count()
+    return sum(zt_map.values()) if zt_map else 0
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
