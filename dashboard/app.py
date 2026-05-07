@@ -969,7 +969,7 @@ def show_main_content():
         show_lhb_flow_breakdown()
         st.divider()
 
-        sub_today, sub_history = st.tabs(["📅 今日", "📋 大宗交易"])
+        sub_today, sub_history = st.tabs(["🐉 龙虎榜", "📋 大宗交易"])
 
         # ── 今日子Tab ─────────────────────────────────────────
         with sub_today:
