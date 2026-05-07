@@ -57,7 +57,7 @@ def now_bjt():
     return datetime.now(BJT)
 
 
-@st.cache_data(ttl=REFRESH_INTERVAL)
+@st.cache_data(ttl=300)
 def load_history() -> dict:
     """从 Supabase 加载近10个交易日所有板块数据，格式: {日期: {行业: 净流入}}"""
     try:
@@ -118,7 +118,7 @@ def save_history(df: pd.DataFrame, prev_df: pd.DataFrame = None):
         st.session_state["_save_industry_err"] = str(e)[:200]
 
 
-@st.cache_data(ttl=REFRESH_INTERVAL)
+@st.cache_data(ttl=300)
 def load_concept_history() -> dict:
     """从 Supabase 加载近10个交易日所有概念板块数据，格式: {日期: {概念: 净流入}}"""
     try:
