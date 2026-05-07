@@ -45,15 +45,6 @@ def is_trading_time() -> bool:
 # 交易时间内5分钟刷新；非交易时间8小时TTL，避免无效请求
 REFRESH_INTERVAL = 300 if is_trading_time() else 3600 * 8
 
-def _lhb_ttl() -> int:
-    """龙虎榜TTL：盘中5分钟；收盘后到20点前30分钟（等待数据发布）；20点后8小时"""
-    now = datetime.now(BJT)
-    if is_trading_time():
-        return 300
-    if now.weekday() < 5 and now.hour < 20:
-        return 1800  # 收盘后到20点：30分钟轮询
-    return 3600 * 8
-
 
 @st.cache_resource
 def get_supabase():
@@ -358,7 +349,7 @@ def fetch_dt_count() -> int:
 
 
 
-@st.cache_data(ttl=_lhb_ttl())
+@st.cache_data(ttl=300)
 def fetch_lhb_data():
     """获取今日龙虎榜明细 + 机构净买统计，并发拉取，返回 (df, jg_df, timestamp)。失败时对应值为 None/空 DataFrame。"""
     import threading
@@ -406,7 +397,7 @@ def fetch_lhb_data():
     return df, jg_df, now_bjt().strftime("%Y-%m-%d %H:%M:%S")
 
 
-@st.cache_data(ttl=_lhb_ttl())
+@st.cache_data(ttl=300)
 def fetch_lhb_jg_flow() -> pd.DataFrame:
     """获取近30日龙虎榜机构买卖统计，按日期汇总返回（亿元）。失败返回空 DataFrame。"""
     import threading
@@ -440,7 +431,7 @@ def fetch_lhb_jg_flow() -> pd.DataFrame:
     return daily.sort_values("date")
 
 
-@st.cache_data(ttl=_lhb_ttl())
+@st.cache_data(ttl=300)
 def fetch_dzjy_data() -> pd.DataFrame:
     """获取今日大宗交易明细，失败返回空 DataFrame。"""
     import threading
