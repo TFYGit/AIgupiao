@@ -353,52 +353,6 @@ def fetch_dt_count() -> int:
     return len(fetch_dt_pool())
 
 
-@st.cache_data(ttl=REFRESH_INTERVAL)
-def fetch_concept_zt_dt() -> "pd.DataFrame":
-    """请求东方财富数据中心，获取概念板块涨停/跌停家数（ZT_NUM/DT_NUM字段）"""
-    import threading, requests
-    result, error = [None], [None]
-    def _run():
-        try:
-            url = "https://datacenter-web.eastmoney.com/api/data/v1/get"
-            params = {
-                "sortColumns": "ZT_NUM",
-                "sortTypes": "-1",
-                "pageSize": "500",
-                "pageNumber": "1",
-                "reportName": "RPT_ROLL_BOARD_QUOTATION",
-                "columns": "BOARD_NAME,ZT_NUM,DT_NUM,UP_NUM,DOWN_NUM",
-                "filter": '(BOARD_TYPE="3")',
-            }
-            headers = {
-                "Referer": "https://data.eastmoney.com/bkzj/hy.html",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            }
-            resp = requests.get(url, params=params, headers=headers, timeout=15)
-            result[0] = resp.json()
-        except Exception as e:
-            error[0] = e
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    t.join(20)
-    if t.is_alive() or error[0] or not result[0]:
-        return pd.DataFrame()
-    try:
-        data = result[0].get("data", {}).get("data") or []
-        rows = []
-        for item in data:
-            zt = int(item.get("ZT_NUM") or 0)
-            dt = int(item.get("DT_NUM") or 0)
-            if zt > 0 or dt > 0:
-                rows.append({"概念板块": item.get("BOARD_NAME", ""), "涨停": zt, "跌停": dt})
-        if not rows:
-            return pd.DataFrame()
-        return (pd.DataFrame(rows)
-                  .sort_values(["涨停", "跌停"], ascending=[False, False])
-                  .reset_index(drop=True))
-    except Exception:
-        return pd.DataFrame()
-
 
 def fetch_dt_sector() -> dict:
     """今日各行业跌停家数，返回 {行业: 跌停数}"""
@@ -1220,18 +1174,6 @@ def show_main_content():
                 height=min(40 * len(sector_df) + 40, 500),
             )
 
-        concept_zt_df = fetch_concept_zt_dt()
-        st.divider()
-        st.subheader("今日涨停 / 跌停板块分布（概念）")
-        if concept_zt_df.empty:
-            st.caption("暂无数据")
-        else:
-            concept_zt_df.index += 1
-            st.dataframe(
-                concept_zt_df,
-                use_container_width=True,
-                height=min(40 * len(concept_zt_df) + 40, 600),
-            )
 
 
 def show_top5_history(current_df: pd.DataFrame, load_fn=None):
