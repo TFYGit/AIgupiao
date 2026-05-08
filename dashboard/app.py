@@ -1063,9 +1063,10 @@ def show_main_content():
                     deduped_df["机构卖出(亿)"] = deduped_df["机构卖出额_raw"].apply(_f2) if has_sel else "-"
                     deduped_df["机构净额(亿)"] = deduped_df["机构净买额_raw"].apply(_fn)
 
-                    lhb_buy = deduped_df.get("龙虎榜买入额", pd.Series(float("nan"), index=deduped_df.index))
-                    lhb_sel = deduped_df.get("龙虎榜卖出额", pd.Series(float("nan"), index=deduped_df.index))
-                    lhb_net = deduped_df["龙虎榜净买额"]
+                    nan_s   = pd.Series(float("nan"), index=deduped_df.index)
+                    lhb_buy = deduped_df["龙虎榜买入额"] if "龙虎榜买入额" in deduped_df.columns else nan_s
+                    lhb_sel = deduped_df["龙虎榜卖出额"] if "龙虎榜卖出额" in deduped_df.columns else nan_s
+                    lhb_net = deduped_df["龙虎榜净买额"] if "龙虎榜净买额" in deduped_df.columns else nan_s
 
                     jg_buy_s = deduped_df["机构买入额_raw"].fillna(0) if has_buy else pd.Series(0, index=deduped_df.index)
                     jg_sel_s = deduped_df["机构卖出额_raw"].fillna(0) if has_sel else pd.Series(0, index=deduped_df.index)
