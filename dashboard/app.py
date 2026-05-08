@@ -355,40 +355,47 @@ def fetch_dt_count() -> int:
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_concept_zt_dt() -> "pd.DataFrame":
-    """从概念板块行情获取各概念涨停/跌停家数"""
-    import threading
+    """直接请求东方财富概念板块列表，提取涨停/跌停家数"""
+    import threading, requests
     result, error = [None], [None]
     def _run():
         try:
-            result[0] = ak.stock_board_concept_name_em()
+            url = "https://push2.eastmoney.com/api/qt/clist/get"
+            params = {
+                "pn": 1, "pz": 2000, "po": 1, "np": 1,
+                "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+                "fltt": 2, "invt": 2,
+                "fid": "f3",
+                "fs": "m:90+t:3",
+                "fields": "f2,f3,f4,f12,f14,f20,f62,f128,f136,f140,f141",
+                "_": int(pd.Timestamp.now().timestamp() * 1000),
+            }
+            headers = {"Referer": "https://data.eastmoney.com/"}
+            resp = requests.get(url, params=params, headers=headers, timeout=15)
+            result[0] = resp.json()
         except Exception as e:
             error[0] = e
     t = threading.Thread(target=_run, daemon=True)
     t.start()
-    t.join(30)
-    if t.is_alive() or error[0] or result[0] is None or result[0].empty:
-        err_msg = str(error[0]) if error[0] else ("timeout" if t.is_alive() else "empty")
+    t.join(20)
+    if t.is_alive() or error[0] or not result[0]:
+        err_msg = str(error[0]) if error[0] else "timeout"
         return pd.DataFrame({"_debug": [f"接口失败: {err_msg}"]})
-    df = result[0]
-    name_col = next((c for c in df.columns if "板块" in c or "名称" in c), None)
-    zt_col   = next((c for c in df.columns if "涨停" in c), None)
-    dt_col   = next((c for c in df.columns if "跌停" in c), None)
-    if not name_col or (not zt_col and not dt_col):
-        return pd.DataFrame({"_debug": [f"列名不匹配，实际列: {list(df.columns)}"]})
-    keep = [name_col] + [c for c in [zt_col, dt_col] if c]
-    out = df[keep].copy()
-    for c in [zt_col, dt_col]:
-        if c:
-            out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0).astype(int)
-    # 只保留有涨停或跌停的行
-    mask = pd.Series(False, index=out.index)
-    if zt_col: mask |= out[zt_col] > 0
-    if dt_col: mask |= out[dt_col] > 0
-    out = out[mask].rename(columns={name_col: "概念板块",
-                                    **({"涨停家数": "涨停"} if zt_col == "涨停家数" else {zt_col: "涨停"} if zt_col else {}),
-                                    **({"跌停家数": "跌停"} if dt_col == "跌停家数" else {dt_col: "跌停"} if dt_col else {})})
-    sort_col = "涨停" if "涨停" in out.columns else out.columns[1]
-    return out.sort_values(sort_col, ascending=False).reset_index(drop=True)
+    try:
+        items = result[0]["data"]["diff"]
+        rows = []
+        for item in items:
+            zt = item.get("f140", 0) or 0
+            dt = item.get("f141", 0) or 0
+            if zt > 0 or dt > 0:
+                rows.append({"概念板块": item.get("f14", ""), "涨停": int(zt), "跌停": int(dt)})
+        if not rows:
+            return pd.DataFrame({"_debug": ["无涨停/跌停概念板块"]})
+        return (pd.DataFrame(rows)
+                  .sort_values(["涨停", "跌停"], ascending=[False, False])
+                  .reset_index(drop=True))
+    except Exception as e:
+        return pd.DataFrame({"_debug": [f"解析失败: {e}"]})
 
 
 def fetch_dt_sector() -> dict:
