@@ -353,6 +353,43 @@ def fetch_dt_count() -> int:
     return len(fetch_dt_pool())
 
 
+@st.cache_data(ttl=REFRESH_INTERVAL)
+def fetch_concept_zt_dt() -> "pd.DataFrame":
+    """从概念板块行情获取各概念涨停/跌停家数"""
+    import threading
+    result, error = [None], [None]
+    def _run():
+        try:
+            result[0] = ak.stock_board_concept_name_em()
+        except Exception as e:
+            error[0] = e
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(30)
+    if t.is_alive() or error[0] or result[0] is None or result[0].empty:
+        return pd.DataFrame()
+    df = result[0]
+    name_col = next((c for c in df.columns if "板块" in c or "名称" in c), None)
+    zt_col   = next((c for c in df.columns if "涨停" in c), None)
+    dt_col   = next((c for c in df.columns if "跌停" in c), None)
+    if not name_col or (not zt_col and not dt_col):
+        return pd.DataFrame()
+    keep = [name_col] + [c for c in [zt_col, dt_col] if c]
+    out = df[keep].copy()
+    for c in [zt_col, dt_col]:
+        if c:
+            out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0).astype(int)
+    # 只保留有涨停或跌停的行
+    mask = pd.Series(False, index=out.index)
+    if zt_col: mask |= out[zt_col] > 0
+    if dt_col: mask |= out[dt_col] > 0
+    out = out[mask].rename(columns={name_col: "概念板块",
+                                    **({"涨停家数": "涨停"} if zt_col == "涨停家数" else {zt_col: "涨停"} if zt_col else {}),
+                                    **({"跌停家数": "跌停"} if dt_col == "跌停家数" else {dt_col: "跌停"} if dt_col else {})})
+    sort_col = "涨停" if "涨停" in out.columns else out.columns[1]
+    return out.sort_values(sort_col, ascending=False).reset_index(drop=True)
+
+
 def fetch_dt_sector() -> dict:
     """今日各行业跌停家数，返回 {行业: 跌停数}"""
     df = fetch_dt_pool()
@@ -1166,11 +1203,21 @@ def show_main_content():
                            .reset_index(drop=True))
             sector_df.index += 1
             st.divider()
-            st.subheader("今日涨停 / 跌停板块分布")
+            st.subheader("今日涨停 / 跌停板块分布（行业）")
             st.dataframe(
                 sector_df,
                 use_container_width=True,
-                height=min(40 * len(sector_df) + 40, 600),
+                height=min(40 * len(sector_df) + 40, 500),
+            )
+
+        concept_zt_df = fetch_concept_zt_dt()
+        if not concept_zt_df.empty:
+            concept_zt_df.index += 1
+            st.subheader("今日涨停 / 跌停板块分布（概念）")
+            st.dataframe(
+                concept_zt_df,
+                use_container_width=True,
+                height=min(40 * len(concept_zt_df) + 40, 600),
             )
 
 
