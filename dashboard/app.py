@@ -383,14 +383,22 @@ def fetch_concept_zt_dt() -> "pd.DataFrame":
         return pd.DataFrame({"_debug": [f"接口失败: {err_msg}"]})
     try:
         items = result[0]["data"]["diff"]
+        # 调试：打印第一条原始数据的所有字段
+        if items:
+            sample = {k: v for k, v in list(items[0].items())[:20]}
+            pass  # 正式运行时移除
         rows = []
         for item in items:
-            zt = item.get("f140", 0) or 0
-            dt = item.get("f141", 0) or 0
+            zt = pd.to_numeric(item.get("f140", 0), errors="coerce")
+            dt = pd.to_numeric(item.get("f141", 0), errors="coerce")
+            zt = int(zt) if pd.notna(zt) else 0
+            dt = int(dt) if pd.notna(dt) else 0
             if zt > 0 or dt > 0:
-                rows.append({"概念板块": item.get("f14", ""), "涨停": int(zt), "跌停": int(dt)})
+                rows.append({"概念板块": item.get("f14", ""), "涨停": zt, "跌停": dt})
         if not rows:
-            return pd.DataFrame({"_debug": ["无涨停/跌停概念板块"]})
+            # 调试：返回第一条原始数据看字段名
+            sample_str = str(dict(list(items[0].items())[:15])) if items else "空"
+            return pd.DataFrame({"_debug": [f"无涨停/跌停数据，样本字段: {sample_str}"]})
         return (pd.DataFrame(rows)
                   .sort_values(["涨停", "跌停"], ascending=[False, False])
                   .reset_index(drop=True))
