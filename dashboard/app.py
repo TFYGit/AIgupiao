@@ -355,22 +355,25 @@ def fetch_dt_count() -> int:
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_concept_zt_dt() -> "pd.DataFrame":
-    """直接请求东方财富概念板块列表，提取涨停/跌停家数"""
+    """请求东方财富数据中心，获取概念板块涨停/跌停家数（ZT_NUM/DT_NUM字段）"""
     import threading, requests
     result, error = [None], [None]
     def _run():
         try:
-            url = "https://push2.eastmoney.com/api/qt/clist/get"
+            url = "https://datacenter-web.eastmoney.com/api/data/v1/get"
             params = {
-                "pn": 1, "pz": 2000, "po": 1, "np": 1,
-                "ut": "bd1d9ddb04089700cf9c27f6f7426281",
-                "fltt": 2, "invt": 2,
-                "fid": "f3",
-                "fs": "m:90+t:3",
-                "fields": "f2,f3,f4,f12,f14,f20,f62,f128,f136,f140,f141",
-                "_": int(pd.Timestamp.now().timestamp() * 1000),
+                "sortColumns": "ZT_NUM",
+                "sortTypes": "-1",
+                "pageSize": "500",
+                "pageNumber": "1",
+                "reportName": "RPT_ROLL_BOARD_QUOTATION",
+                "columns": "BOARD_NAME,ZT_NUM,DT_NUM,UP_NUM,DOWN_NUM",
+                "filter": '(BOARD_TYPE="3")',
             }
-            headers = {"Referer": "https://data.eastmoney.com/"}
+            headers = {
+                "Referer": "https://data.eastmoney.com/bkzj/hy.html",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            }
             resp = requests.get(url, params=params, headers=headers, timeout=15)
             result[0] = resp.json()
         except Exception as e:
@@ -379,31 +382,22 @@ def fetch_concept_zt_dt() -> "pd.DataFrame":
     t.start()
     t.join(20)
     if t.is_alive() or error[0] or not result[0]:
-        err_msg = str(error[0]) if error[0] else "timeout"
-        return pd.DataFrame({"_debug": [f"接口失败: {err_msg}"]})
+        return pd.DataFrame()
     try:
-        items = result[0]["data"]["diff"]
-        # 调试：打印第一条原始数据的所有字段
-        if items:
-            sample = {k: v for k, v in list(items[0].items())[:20]}
-            pass  # 正式运行时移除
+        data = result[0].get("data", {}).get("data") or []
         rows = []
-        for item in items:
-            zt = pd.to_numeric(item.get("f140", 0), errors="coerce")
-            dt = pd.to_numeric(item.get("f141", 0), errors="coerce")
-            zt = int(zt) if pd.notna(zt) else 0
-            dt = int(dt) if pd.notna(dt) else 0
+        for item in data:
+            zt = int(item.get("ZT_NUM") or 0)
+            dt = int(item.get("DT_NUM") or 0)
             if zt > 0 or dt > 0:
-                rows.append({"概念板块": item.get("f14", ""), "涨停": zt, "跌停": dt})
+                rows.append({"概念板块": item.get("BOARD_NAME", ""), "涨停": zt, "跌停": dt})
         if not rows:
-            # 调试：返回第一条原始数据看字段名
-            sample_str = str(dict(list(items[0].items())[:15])) if items else "空"
-            return pd.DataFrame({"_debug": [f"无涨停/跌停数据，样本字段: {sample_str}"]})
+            return pd.DataFrame()
         return (pd.DataFrame(rows)
                   .sort_values(["涨停", "跌停"], ascending=[False, False])
                   .reset_index(drop=True))
-    except Exception as e:
-        return pd.DataFrame({"_debug": [f"解析失败: {e}"]})
+    except Exception:
+        return pd.DataFrame()
 
 
 def fetch_dt_sector() -> dict:
@@ -1227,10 +1221,9 @@ def show_main_content():
             )
 
         concept_zt_df = fetch_concept_zt_dt()
+        st.divider()
         st.subheader("今日涨停 / 跌停板块分布（概念）")
-        if "_debug" in concept_zt_df.columns:
-            st.caption(concept_zt_df["_debug"].iloc[0])
-        elif concept_zt_df.empty:
+        if concept_zt_df.empty:
             st.caption("暂无数据")
         else:
             concept_zt_df.index += 1
