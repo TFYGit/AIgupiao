@@ -402,10 +402,17 @@ def fetch_lhb_data():
         raw = jg_res[0]
         code_col = next((c for c in ["代码", "股票代码"] if c in raw.columns), None)
         net_col  = next((c for c in ["机构买入净额", "机构净买额", "净买额"] if c in raw.columns), None)
+        buy_col  = next((c for c in ["机构买入总额", "机构买入额"] if c in raw.columns), None)
+        sel_col  = next((c for c in ["机构卖出总额", "机构卖出额"] if c in raw.columns), None)
         if code_col and net_col:
-            raw[net_col] = pd.to_numeric(raw[net_col], errors="coerce") / 1e8
+            for c in [net_col, buy_col, sel_col]:
+                if c:
+                    raw[c] = pd.to_numeric(raw[c], errors="coerce") / 1e8
             raw = raw.drop_duplicates(subset=[code_col])
-            jg_df = raw[[code_col, net_col]].rename(columns={code_col: "代码", net_col: "机构净买额_raw"})
+            keep = {code_col: "代码", net_col: "机构净买额_raw"}
+            if buy_col: keep[buy_col] = "机构买入额_raw"
+            if sel_col: keep[sel_col] = "机构卖出额_raw"
+            jg_df = raw[list(keep)].rename(columns=keep)
 
     return df, jg_df, now_bjt().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -1036,30 +1043,46 @@ def show_main_content():
                                         .drop_duplicates(subset=["代码"], keep="first")
                                         .reset_index(drop=True))
 
-                    # 合并机构净买额，计算游资净买入
+                    # 合并机构买入/卖出/净额，计算游资
                     jg_stock = lhb_jg_stock
                     if not jg_stock.empty:
                         deduped_df = deduped_df.merge(jg_stock, on="代码", how="left")
                     else:
-                        deduped_df["机构净买额_raw"] = float("nan")
+                        for c in ["机构净买额_raw", "机构买入额_raw", "机构卖出额_raw"]:
+                            deduped_df[c] = float("nan")
 
-                    def _fmt_net(v):
+                    def _f2(v):
+                        return "-" if pd.isna(v) else f"{v:.2f}"
+                    def _fn(v):
                         return "-" if pd.isna(v) else f"{v:+.2f}"
 
-                    deduped_df["机构净买入"] = deduped_df["机构净买额_raw"].apply(_fmt_net)
-                    yj = deduped_df["龙虎榜净买额"] - deduped_df["机构净买额_raw"].fillna(0)
-                    # 机构不在榜时游资 = 龙虎榜净买额；机构在榜且游资为0则显示 "-"
-                    deduped_df["游资净买入"] = deduped_df.apply(
-                        lambda r: f"{r['龙虎榜净买额']:+.2f}" if pd.isna(r["机构净买额_raw"])
-                                  else ("-" if abs(yj[r.name]) < 0.001 else f"{yj[r.name]:+.2f}"),
-                        axis=1,
-                    )
+                    has_buy = "机构买入额_raw" in deduped_df.columns
+                    has_sel = "机构卖出额_raw" in deduped_df.columns
 
-                    show_cols = [c for c in ["代码", "名称", "涨跌幅", "机构净买入", "游资净买入",
-                                 "换手率", "净买额占总成交比"] if c in deduped_df.columns]
-                    fmt = {k: v for k, v in lhb_fmt.items() if k in show_cols}
+                    deduped_df["机构买入(亿)"] = deduped_df["机构买入额_raw"].apply(_f2) if has_buy else "-"
+                    deduped_df["机构卖出(亿)"] = deduped_df["机构卖出额_raw"].apply(_f2) if has_sel else "-"
+                    deduped_df["机构净额(亿)"] = deduped_df["机构净买额_raw"].apply(_fn)
+
+                    lhb_buy = deduped_df.get("龙虎榜买入额", pd.Series(float("nan"), index=deduped_df.index))
+                    lhb_sel = deduped_df.get("龙虎榜卖出额", pd.Series(float("nan"), index=deduped_df.index))
+                    lhb_net = deduped_df["龙虎榜净买额"]
+
+                    jg_buy_s = deduped_df["机构买入额_raw"].fillna(0) if has_buy else pd.Series(0, index=deduped_df.index)
+                    jg_sel_s = deduped_df["机构卖出额_raw"].fillna(0) if has_sel else pd.Series(0, index=deduped_df.index)
+                    jg_net_s = deduped_df["机构净买额_raw"].fillna(0)
+
+                    deduped_df["游资买入(亿)"] = (lhb_buy - jg_buy_s).apply(_f2)
+                    deduped_df["游资卖出(亿)"] = (lhb_sel - jg_sel_s).apply(_f2)
+                    deduped_df["游资净额(亿)"] = (lhb_net - jg_net_s).apply(_fn)
+
+                    show_cols = [c for c in [
+                        "代码", "名称", "涨跌幅",
+                        "机构买入(亿)", "机构卖出(亿)", "机构净额(亿)",
+                        "游资买入(亿)", "游资卖出(亿)", "游资净额(亿)",
+                        "换手率", "净买额占总成交比",
+                    ] if c in deduped_df.columns]
                     st.dataframe(
-                        deduped_df[show_cols].style.format(fmt),
+                        deduped_df[show_cols],
                         use_container_width=True, height=520,
                     )
 
