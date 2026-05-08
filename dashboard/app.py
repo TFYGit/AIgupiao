@@ -1168,9 +1168,7 @@ def show_main_content():
             st.divider()
             st.subheader("今日涨停 / 跌停板块分布")
             st.dataframe(
-                sector_df.style.format({"涨停": "{:d}", "跌停": "{:d}"})
-                    .background_gradient(subset=["涨停"], cmap="Reds", vmin=0)
-                    .background_gradient(subset=["跌停"], cmap="Greens_r", vmin=0),
+                sector_df,
                 use_container_width=True,
                 height=min(40 * len(sector_df) + 40, 600),
             )
