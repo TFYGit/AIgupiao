@@ -239,12 +239,16 @@ def load_lhb_history() -> pd.DataFrame:
                   .execute().data)
         if not rows:
             return pd.DataFrame()
-        return pd.DataFrame(rows).rename(columns={
+        df = pd.DataFrame(rows).rename(columns={
             "date": "上榜日", "code": "代码", "name": "名称", "reason": "上榜原因",
             "change_pct": "涨跌幅", "net_buy": "龙虎榜净买额",
             "buy_amount": "龙虎榜买入额", "sell_amount": "龙虎榜卖出额",
             "turnover": "换手率", "net_buy_ratio": "净买额占总成交比",
         })
+        # 过滤历史数据中已存入的多日累计原因行，保持与实时数据一致
+        if "上榜原因" in df.columns:
+            df = df[~df["上榜原因"].str.contains("连续|累计", na=False)]
+        return df
     except Exception:
         return pd.DataFrame()
 
@@ -390,6 +394,11 @@ def fetch_lhb_data():
     if t1.is_alive() or detail_err[0] or detail_res[0] is None or detail_res[0].empty:
         return None, pd.DataFrame(), None
     df = detail_res[0]
+    # 过滤掉"连续N日累计偏离"类原因：这些行跨多日汇总，数值虚高，不代表单日数据
+    if "上榜原因" in df.columns:
+        single_mask = ~df["上榜原因"].str.contains("连续|累计", na=False)
+        if single_mask.any():
+            df = df[single_mask].copy()
     for col in ["龙虎榜净买额", "龙虎榜买入额", "龙虎榜卖出额", "龙虎榜成交额", "市场总成交额", "流通市值"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce") / 1e8

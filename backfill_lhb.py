@@ -39,6 +39,11 @@ def fetch_lhb_range(start: str, end: str) -> pd.DataFrame:
     df = ak.stock_lhb_detail_em(start_date=start, end_date=end)
     if df is None or df.empty:
         return pd.DataFrame()
+    # 过滤掉"连续N日累计偏离"类原因：这些行跨多日汇总，数值虚高
+    if "上榜原因" in df.columns:
+        single_mask = ~df["上榜原因"].str.contains("连续|累计", na=False)
+        if single_mask.any():
+            df = df[single_mask].copy()
     for col in ["龙虎榜净买额", "龙虎榜买入额", "龙虎榜卖出额", "龙虎榜成交额", "市场总成交额", "流通市值"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce") / 1e8
