@@ -1150,6 +1150,8 @@ def show_main_content():
         c1, c2 = st.columns(2)
         c1.metric("今日涨停", f"{zt_total} 只")
         c2.metric("今日跌停", f"{dt_total} 只")
+        if zt_total == 0 and is_market_open():
+            st.warning("涨停池接口暂时无法获取数据，图表已回退到数据库历史值")
         show_zt_dt_trend(zt_total, dt_total)
 
         # 板块明细
@@ -1339,6 +1341,12 @@ def show_zt_dt_trend(zt_today: int, dt_today: int):
     """展示近10日涨停/跌停家数趋势"""
     history = load_zt_dt_history()
     today = now_bjt().strftime("%Y-%m-%d")
+
+    # 实时返回0时，优先用数据库已保存的今日数据（避免API失败显示为0）
+    today_db = history[history["date"] == today]
+    if zt_today == 0 and not today_db.empty and int(today_db["zt_count"].iloc[0]) > 0:
+        zt_today = int(today_db["zt_count"].iloc[0])
+        dt_today = int(today_db["dt_count"].iloc[0])
 
     today_row = pd.DataFrame([{"date": today, "zt_count": zt_today, "dt_count": dt_today}])
     df = pd.concat([history[history["date"] != today], today_row], ignore_index=True)
