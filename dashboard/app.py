@@ -367,13 +367,14 @@ def fetch_concept_zt_dt() -> "pd.DataFrame":
     t.start()
     t.join(30)
     if t.is_alive() or error[0] or result[0] is None or result[0].empty:
-        return pd.DataFrame()
+        err_msg = str(error[0]) if error[0] else ("timeout" if t.is_alive() else "empty")
+        return pd.DataFrame({"_debug": [f"接口失败: {err_msg}"]})
     df = result[0]
     name_col = next((c for c in df.columns if "板块" in c or "名称" in c), None)
     zt_col   = next((c for c in df.columns if "涨停" in c), None)
     dt_col   = next((c for c in df.columns if "跌停" in c), None)
     if not name_col or (not zt_col and not dt_col):
-        return pd.DataFrame()
+        return pd.DataFrame({"_debug": [f"列名不匹配，实际列: {list(df.columns)}"]})
     keep = [name_col] + [c for c in [zt_col, dt_col] if c]
     out = df[keep].copy()
     for c in [zt_col, dt_col]:
@@ -1211,9 +1212,13 @@ def show_main_content():
             )
 
         concept_zt_df = fetch_concept_zt_dt()
-        if not concept_zt_df.empty:
+        st.subheader("今日涨停 / 跌停板块分布（概念）")
+        if "_debug" in concept_zt_df.columns:
+            st.caption(concept_zt_df["_debug"].iloc[0])
+        elif concept_zt_df.empty:
+            st.caption("暂无数据")
+        else:
             concept_zt_df.index += 1
-            st.subheader("今日涨停 / 跌停板块分布（概念）")
             st.dataframe(
                 concept_zt_df,
                 use_container_width=True,
