@@ -330,8 +330,8 @@ def fetch_zt_total() -> int:
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
-def fetch_dt_count() -> int:
-    """直接查跌停池，返回今日跌停总家数"""
+def fetch_dt_pool() -> "pd.DataFrame":
+    """获取今日跌停池完整数据，供 fetch_dt_count / fetch_dt_sector 复用"""
     import threading
     result, error = [None], [None]
     def _run():
@@ -344,9 +344,21 @@ def fetch_dt_count() -> int:
     t.start()
     t.join(15)
     if t.is_alive() or error[0] or result[0] is None or result[0].empty:
-        return 0
-    return len(result[0])
+        return pd.DataFrame()
+    return result[0]
 
+
+def fetch_dt_count() -> int:
+    """今日跌停总家数"""
+    return len(fetch_dt_pool())
+
+
+def fetch_dt_sector() -> dict:
+    """今日各行业跌停家数，返回 {行业: 跌停数}"""
+    df = fetch_dt_pool()
+    if df.empty or "所属行业" not in df.columns:
+        return {}
+    return df["所属行业"].value_counts().to_dict()
 
 
 @st.cache_data(ttl=300)
@@ -1138,6 +1150,30 @@ def show_main_content():
         c1.metric("今日涨停", f"{zt_total} 只")
         c2.metric("今日跌停", f"{dt_total} 只")
         show_zt_dt_trend(zt_total, dt_total)
+
+        # 板块明细
+        zt_map = fetch_zt_count()
+        dt_map = fetch_dt_sector()
+        all_sectors = sorted(set(zt_map) | set(dt_map))
+        if all_sectors:
+            sector_rows = []
+            for s in all_sectors:
+                zt_n = zt_map.get(s, 0)
+                dt_n = dt_map.get(s, 0)
+                sector_rows.append({"板块": s, "涨停": zt_n, "跌停": dt_n})
+            sector_df = (pd.DataFrame(sector_rows)
+                           .sort_values(["涨停", "跌停"], ascending=[False, False])
+                           .reset_index(drop=True))
+            sector_df.index += 1
+            st.divider()
+            st.subheader("今日涨停 / 跌停板块分布")
+            st.dataframe(
+                sector_df.style.format({"涨停": "{:d}", "跌停": "{:d}"})
+                    .background_gradient(subset=["涨停"], cmap="Reds", vmin=0)
+                    .background_gradient(subset=["跌停"], cmap="Greens_r", vmin=0),
+                use_container_width=True,
+                height=min(40 * len(sector_df) + 40, 600),
+            )
 
 
 def show_top5_history(current_df: pd.DataFrame, load_fn=None):
