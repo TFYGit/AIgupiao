@@ -392,10 +392,6 @@ def _lhb_fetch_one_day(date_str: str) -> tuple:
     if t1.is_alive() or detail_err[0] or detail_res[0] is None or detail_res[0].empty:
         return None, pd.DataFrame()
     df = detail_res[0]
-    if "上榜原因" in df.columns:
-        single_mask = ~df["上榜原因"].str.contains("连续|累计", na=False)
-        if single_mask.any():
-            df = df[single_mask].copy()
     for col in ["龙虎榜净买额", "龙虎榜买入额", "龙虎榜卖出额", "龙虎榜成交额", "市场总成交额", "流通市值"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce") / 1e8
@@ -985,12 +981,26 @@ def show_main_content():
                         save_lhb_history(lhb_df)
                         st.session_state["lhb_saved_date"] = today_str
 
-                    # 按代码去重（同一股票可能因多个原因上榜，保留净买额最大的一行）
-                    sort_col = "龙虎榜净买额" if "龙虎榜净买额" in lhb_df.columns else "代码"
-                    deduped_df = (lhb_df
-                                  .sort_values(sort_col, ascending=False)
-                                  .drop_duplicates(subset=["代码"], keep="first")
-                                  .reset_index(drop=True))
+                    # 区分单日行（金额可信）和连续/累计行（金额是多日累计，不可信）
+                    is_cumul = lhb_df["上榜原因"].str.contains("连续|累计", na=False) if "上榜原因" in lhb_df.columns else pd.Series(False, index=lhb_df.index)
+                    single_df = lhb_df[~is_cumul]
+                    cumul_only_codes = set(lhb_df[is_cumul]["代码"]) - set(single_df["代码"]) if "代码" in lhb_df.columns else set()
+
+                    # 单日行按代码去重，保留净买额最大的一行
+                    sort_col = "龙虎榜净买额" if "龙虎榜净买额" in single_df.columns else "代码"
+                    deduped_single = (single_df
+                                      .sort_values(sort_col, ascending=False)
+                                      .drop_duplicates(subset=["代码"], keep="first"))
+
+                    # 连续/累计唯一行（只有累计原因的股票）：保留基本信息，金额置空
+                    cumul_only_df = (lhb_df[lhb_df["代码"].isin(cumul_only_codes)]
+                                     .drop_duplicates(subset=["代码"], keep="first")
+                                     .copy())
+                    for _col in ["龙虎榜净买额", "龙虎榜买入额", "龙虎榜卖出额", "净买额占总成交比"]:
+                        if _col in cumul_only_df.columns:
+                            cumul_only_df[_col] = float("nan")
+
+                    deduped_df = pd.concat([deduped_single, cumul_only_df], ignore_index=True)
 
                     # 合并机构净买额（原始数值）
                     if not lhb_jg_stock.empty:
@@ -999,10 +1009,10 @@ def show_main_content():
                         deduped_df["机构净买额_raw"] = float("nan")
                     deduped_df = deduped_df.rename(columns={"机构净买额_raw": "机构净买额(亿)"})
 
-                    # 汇总指标（直接来自东财原始数据）
-                    total_buy  = deduped_df["龙虎榜买入额"].sum() if "龙虎榜买入额" in deduped_df.columns else float("nan")
-                    total_sell = deduped_df["龙虎榜卖出额"].sum() if "龙虎榜卖出额" in deduped_df.columns else float("nan")
-                    total_net  = deduped_df["龙虎榜净买额"].sum() if "龙虎榜净买额" in deduped_df.columns else float("nan")
+                    # 汇总指标只用单日行（金额可信）
+                    total_buy  = deduped_single["龙虎榜买入额"].sum() if "龙虎榜买入额" in deduped_single.columns else float("nan")
+                    total_sell = deduped_single["龙虎榜卖出额"].sum() if "龙虎榜卖出额" in deduped_single.columns else float("nan")
+                    total_net  = deduped_single["龙虎榜净买额"].sum() if "龙虎榜净买额" in deduped_single.columns else float("nan")
                     jg_net_sum = deduped_df["机构净买额(亿)"].sum() if "机构净买额(亿)" in deduped_df.columns else float("nan")
 
                     c1, c2, c3, c4, c5, c6 = st.columns(6)
