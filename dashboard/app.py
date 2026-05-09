@@ -854,14 +854,15 @@ def show_main_content():
                             st.session_state["intraday_snap_date"]  = today_str
                         snap = new_df.set_index("行业板块")["净流入(亿元)"].to_dict()
                         st.session_state["intraday_snapshots"].append(snap)
-                        # 交易时段存库；闭市后仅补存一次（当日未存过时）
+                        # 交易时段存库；闭市后仅补存一次（当日未存过时）；周末不存
+                        is_weekday = now_bjt().weekday() < 5
                         if is_open:
                             save_history(new_df, prev_df=last_df)
                             st.session_state["last_saved_industry_date"] = today_str
                             zt_snap = fetch_zt_total()
                             dt_snap = fetch_dt_count()
                             save_zt_dt_history(zt_snap, dt_snap)
-                        elif st.session_state.get("last_saved_industry_date") != today_str:
+                        elif is_weekday and st.session_state.get("last_saved_industry_date") != today_str:
                             save_history(new_df, prev_df=last_df)
                             st.session_state["last_saved_industry_date"] = today_str
                 except Exception as fetch_err:
@@ -936,7 +937,7 @@ def show_main_content():
                         if is_open:
                             save_concept_history(new_df, prev_df=last_df)
                             st.session_state["last_saved_concept_date"] = today_str
-                        elif st.session_state.get("last_saved_concept_date") != today_str:
+                        elif is_weekday and st.session_state.get("last_saved_concept_date") != today_str:
                             save_concept_history(new_df, prev_df=last_df)
                             st.session_state["last_saved_concept_date"] = today_str
             except Exception as fetch_err:
@@ -1173,22 +1174,26 @@ def show_top5_history(current_df: pd.DataFrame, load_fn=None):
     # 历史日期（不含今日，避免重复）
     hist_dates = sorted(d for d in history.keys() if d != today)
 
-    # 构建表格：行=行业，列=历史日期+今日实时
+    # 非工作日不加"实时"列（避免把前一交易日数据重复显示）
+    is_weekday = now_bjt().weekday() < 5
+
+    # 构建表格：行=行业，列=历史日期+今日实时（仅工作日）
     rows = []
     for ind in industries:
         row = {"行业板块": ind}
         for d in hist_dates:
             val = history[d].get(ind)
             row[d] = val
-        cur = current_df.loc[current_df["行业板块"] == ind, "净流入(亿元)"]
-        row[today + "（实时）"] = round(float(cur.values[0]), 2) if len(cur) > 0 else None
+        if is_weekday:
+            cur = current_df.loc[current_df["行业板块"] == ind, "净流入(亿元)"]
+            row[today + "（实时）"] = round(float(cur.values[0]), 2) if len(cur) > 0 else None
         rows.append(row)
 
     table_df = pd.DataFrame(rows).set_index("行业板块")
     # 最新数据（实时）放第一列，历史日期降序排列
     today_col = today + "（实时）"
     hist_cols = sorted(hist_dates, reverse=True)
-    ordered_cols = [c for c in [today_col] + hist_cols if c in table_df.columns]
+    ordered_cols = [c for c in ([today_col] if is_weekday else []) + hist_cols if c in table_df.columns]
     table_df = table_df[ordered_cols]
 
     # 5日净值合计列
