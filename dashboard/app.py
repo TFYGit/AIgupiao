@@ -421,14 +421,10 @@ def fetch_lhb_data():
     今日无数据时自动回退到最近工作日；fallback_date 为 None 表示今日数据。"""
     from datetime import timedelta
     today = now_bjt().date()
-    candidates = []
-    for delta in range(0, 10):
-        d = today - timedelta(days=delta)
-        if d.weekday() < 5:
-            candidates.append(d)
-        if len(candidates) >= 3:
-            break
-    for d in candidates:
+    yesterday = today - timedelta(days=1)
+    if yesterday.weekday() >= 5:
+        yesterday = yesterday - timedelta(days=yesterday.weekday() - 4)
+    for d in [today, yesterday]:
         df, jg_df = _lhb_fetch_one_day(d.strftime("%Y%m%d"))
         if df is not None:
             fallback_date = None if d == today else d.strftime("%Y-%m-%d")
@@ -470,14 +466,10 @@ def fetch_dzjy_data() -> tuple:
     今日无数据时自动回退到最近工作日；fallback_date 为 None 表示是今日数据。"""
     from datetime import timedelta
     today = now_bjt().date()
-    candidates = []
-    for delta in range(0, 10):
-        d = today - timedelta(days=delta)
-        if d.weekday() < 5:
-            candidates.append(d)
-        if len(candidates) >= 3:
-            break
-    for d in candidates:
+    yesterday = today - timedelta(days=1)
+    if yesterday.weekday() >= 5:
+        yesterday = yesterday - timedelta(days=yesterday.weekday() - 4)
+    for d in [today, yesterday]:
         df = _dzjy_fetch_date(d.strftime("%Y%m%d"))
         if not df.empty:
             return df, (None if d == today else d.strftime("%Y-%m-%d"))
