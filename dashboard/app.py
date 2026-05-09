@@ -1225,12 +1225,13 @@ def show_top5_history(current_df: pd.DataFrame, load_fn=None):
         for d in hist_dates:
             val = history[d].get(ind)
             row[d] = val
-        cur = current_df.loc[current_df["行业板块"] == ind, "净流入(亿元)"]
-        row[today_col] = round(float(cur.values[0]), 2) if len(cur) > 0 else None
+        if is_weekday:
+            cur = current_df.loc[current_df["行业板块"] == ind, "净流入(亿元)"]
+            row[today_col] = round(float(cur.values[0]), 2) if len(cur) > 0 else None
         bot_rows.append(row)
 
     bot_df = pd.DataFrame(bot_rows).set_index("行业板块")
-    bot_df = bot_df[[c for c in [today_col] + hist_cols if c in bot_df.columns]]
+    bot_df = bot_df[[c for c in ([today_col] if is_weekday else []) + hist_cols if c in bot_df.columns]]
     bot_df["10日合计"] = bot_df.apply(lambda row: round(row.dropna().sum(), 2), axis=1)
 
     st.subheader("净流出TOP5 · 近10日统计（亿元）")
@@ -1247,12 +1248,13 @@ def show_top5_history(current_df: pd.DataFrame, load_fn=None):
         for d in hist_dates:
             val = history[d].get(ind)
             row[d] = val
-        cur = current_df.loc[current_df["行业板块"] == ind, "净流入(亿元)"]
-        row[today_col] = round(float(cur.values[0]), 2) if len(cur) > 0 else None
+        if is_weekday:
+            cur = current_df.loc[current_df["行业板块"] == ind, "净流入(亿元)"]
+            row[today_col] = round(float(cur.values[0]), 2) if len(cur) > 0 else None
         sum_rows.append(row)
 
     sum_df = pd.DataFrame(sum_rows).set_index("行业板块")
-    sum_df = sum_df[[c for c in [today_col] + hist_cols if c in sum_df.columns]]
+    sum_df = sum_df[[c for c in ([today_col] if is_weekday else []) + hist_cols if c in sum_df.columns]]
     sum_df["10日合计"] = sum_df.apply(lambda row: round(row.dropna().sum(), 2), axis=1)
     top5_sum_df = sum_df.nlargest(5, "10日合计")
 
