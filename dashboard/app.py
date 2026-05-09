@@ -366,23 +366,21 @@ def fetch_dt_sector() -> dict:
     return df["所属行业"].value_counts().to_dict()
 
 
-@st.cache_data(ttl=300)
-def fetch_lhb_data():
-    """获取今日龙虎榜明细 + 机构净买统计，并发拉取，返回 (df, jg_df, timestamp)。失败时对应值为 None/空 DataFrame。"""
+def _lhb_fetch_one_day(date_str: str) -> tuple:
+    """并发拉取指定日期龙虎榜明细+机构数据，返回 (df, jg_df)；失败返回 (None, DataFrame())。"""
     import threading
-    today = now_bjt().strftime("%Y%m%d")
     detail_res, detail_err = [None], [None]
     jg_res, jg_err = [None], [None]
 
     def _run_detail():
         try:
-            detail_res[0] = ak.stock_lhb_detail_em(start_date=today, end_date=today)
+            detail_res[0] = ak.stock_lhb_detail_em(start_date=date_str, end_date=date_str)
         except Exception as e:
             detail_err[0] = e
 
     def _run_jg():
         try:
-            jg_res[0] = ak.stock_lhb_jgmmtj_em(start_date=today, end_date=today)
+            jg_res[0] = ak.stock_lhb_jgmmtj_em(start_date=date_str, end_date=date_str)
         except Exception as e:
             jg_err[0] = e
 
@@ -392,9 +390,8 @@ def fetch_lhb_data():
     t1.join(30); t2.join(30)
 
     if t1.is_alive() or detail_err[0] or detail_res[0] is None or detail_res[0].empty:
-        return None, pd.DataFrame(), None
+        return None, pd.DataFrame()
     df = detail_res[0]
-    # 过滤掉"连续N日累计偏离"类原因：这些行跨多日汇总，数值虚高，不代表单日数据
     if "上榜原因" in df.columns:
         single_mask = ~df["上榜原因"].str.contains("连续|累计", na=False)
         if single_mask.any():
@@ -415,8 +412,28 @@ def fetch_lhb_data():
             raw[net_col] = pd.to_numeric(raw[net_col], errors="coerce") / 1e8
             raw = raw.drop_duplicates(subset=[code_col])
             jg_df = raw[[code_col, net_col]].rename(columns={code_col: "代码", net_col: "机构净买额_raw"})
+    return df, jg_df
 
-    return df, jg_df, now_bjt().strftime("%Y-%m-%d %H:%M:%S")
+
+@st.cache_data(ttl=300)
+def fetch_lhb_data():
+    """获取最近有数据的龙虎榜，返回 (df, jg_df, timestamp, fallback_date)。
+    今日无数据时自动回退到最近工作日；fallback_date 为 None 表示今日数据。"""
+    from datetime import timedelta
+    today = now_bjt().date()
+    candidates = []
+    for delta in range(0, 10):
+        d = today - timedelta(days=delta)
+        if d.weekday() < 5:
+            candidates.append(d)
+        if len(candidates) >= 3:
+            break
+    for d in candidates:
+        df, jg_df = _lhb_fetch_one_day(d.strftime("%Y%m%d"))
+        if df is not None:
+            fallback_date = None if d == today else d.strftime("%Y-%m-%d")
+            return df, jg_df, now_bjt().strftime("%Y-%m-%d %H:%M:%S"), fallback_date
+    return None, pd.DataFrame(), None, None
 
 
 
@@ -958,22 +975,12 @@ def show_main_content():
 
     # ── 龙虎榜 Tab ────────────────────────────────────────────
     with tab_lhb:
-        lhb_df, lhb_jg_stock, lhb_updated = fetch_lhb_data()
+        lhb_df, lhb_jg_stock, lhb_updated, lhb_fallback_date = fetch_lhb_data()
 
         sub_today, sub_history = st.tabs(["🐉 龙虎榜", "📋 大宗交易"])
 
         # ── 今日龙虎榜 ─────────────────────────────────────────
         with sub_today:
-            lhb_fallback_date = None
-            if lhb_df is None:
-                _hist = load_lhb_history()
-                if not _hist.empty:
-                    _latest = _hist["上榜日"].max()
-                    lhb_df = _hist[_hist["上榜日"] == _latest].copy()
-                    lhb_jg_stock = pd.DataFrame()
-                    lhb_updated = _latest
-                    lhb_fallback_date = _latest
-
             if lhb_df is None:
                 st.info("龙虎榜数据暂不可用（通常在收盘后更新）")
             else:
