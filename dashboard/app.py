@@ -421,20 +421,18 @@ def fetch_lhb_data():
 
 
 
-@st.cache_data(ttl=300)
-def fetch_dzjy_data() -> pd.DataFrame:
-    """获取今日大宗交易明细，失败返回空 DataFrame。"""
+def _dzjy_fetch_date(date_str: str) -> pd.DataFrame:
+    """拉取指定日期大宗交易原始数据，失败或无数据返回空 DataFrame。"""
     import threading
     result, error = [None], [None]
     def _run():
         try:
-            today = now_bjt().strftime("%Y%m%d")
-            result[0] = ak.stock_dzjy_mrmx(symbol="A股", start_date=today, end_date=today)
+            result[0] = ak.stock_dzjy_mrmx(symbol="A股", start_date=date_str, end_date=date_str)
         except Exception as e:
             error[0] = e
     t = threading.Thread(target=_run, daemon=True)
     t.start()
-    t.join(60)
+    t.join(30)
     if t.is_alive() or error[0] or result[0] is None or result[0].empty:
         return pd.DataFrame()
     df = result[0]
@@ -447,6 +445,26 @@ def fetch_dzjy_data() -> pd.DataFrame:
     if "成交额(亿)" in df.columns:
         df = df.sort_values("成交额(亿)", ascending=False)
     return df.reset_index(drop=True)
+
+
+@st.cache_data(ttl=300)
+def fetch_dzjy_data() -> tuple:
+    """获取最近有数据的大宗交易，返回 (df, fallback_date)。
+    今日无数据时自动回退到最近工作日；fallback_date 为 None 表示是今日数据。"""
+    from datetime import timedelta
+    today = now_bjt().date()
+    candidates = []
+    for delta in range(0, 10):
+        d = today - timedelta(days=delta)
+        if d.weekday() < 5:
+            candidates.append(d)
+        if len(candidates) >= 3:
+            break
+    for d in candidates:
+        df = _dzjy_fetch_date(d.strftime("%Y%m%d"))
+        if not df.empty:
+            return df, (None if d == today else d.strftime("%Y-%m-%d"))
+    return pd.DataFrame(), None
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
@@ -946,13 +964,25 @@ def show_main_content():
 
         # ── 今日龙虎榜 ─────────────────────────────────────────
         with sub_today:
+            lhb_fallback_date = None
             if lhb_df is None:
-                st.info("今日暂无龙虎榜数据（通常在收盘后更新）")
+                _hist = load_lhb_history()
+                if not _hist.empty:
+                    _latest = _hist["上榜日"].max()
+                    lhb_df = _hist[_hist["上榜日"] == _latest].copy()
+                    lhb_jg_stock = pd.DataFrame()
+                    lhb_updated = _latest
+                    lhb_fallback_date = _latest
+
+            if lhb_df is None:
+                st.info("龙虎榜数据暂不可用（通常在收盘后更新）")
             else:
+                if lhb_fallback_date:
+                    st.caption(f"⚠️ 今日实时数据暂不可用，显示最近一期数据（{lhb_fallback_date}）")
                 try:
-                    # 今日数据存库（每日只存一次）
+                    # 今日数据存库（仅非回退状态时，每日只存一次）
                     today_str = now_bjt().strftime("%Y-%m-%d")
-                    if st.session_state.get("lhb_saved_date") != today_str:
+                    if not lhb_fallback_date and st.session_state.get("lhb_saved_date") != today_str:
                         save_lhb_history(lhb_df)
                         st.session_state["lhb_saved_date"] = today_str
 
@@ -1011,10 +1041,12 @@ def show_main_content():
         # ── 大宗交易子Tab ──────────────────────────────────────
         with sub_history:
             try:
-                dzjy_df = fetch_dzjy_data()
+                dzjy_df, dzjy_fallback_date = fetch_dzjy_data()
                 if dzjy_df.empty:
-                    st.info("今日暂无大宗交易数据（通常在收盘后更新）")
+                    st.info("大宗交易数据暂不可用（通常在收盘后更新）")
                 else:
+                    if dzjy_fallback_date:
+                        st.caption(f"⚠️ 今日实时数据暂不可用，显示最近一期数据（{dzjy_fallback_date}）")
                     ca, cb = st.columns(2)
                     ca.metric("今日大宗交易", f"{len(dzjy_df)} 笔")
                     if "成交额(亿)" in dzjy_df.columns:
