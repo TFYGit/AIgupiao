@@ -738,7 +738,7 @@ def render_auction(df):
     )
 
 
-def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—", zt_total=None, dt_total=None, snapshots=None):
+def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—", zt_total=None, dt_total=None, snapshots=None, load_fn=None):
     import numpy as np
     show_df = df.copy()
 
@@ -788,10 +788,27 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—", zt_t
 
     st.plotly_chart(build_fund_flow_chart(df), use_container_width=True)
 
+    # 计算每个板块的10日净流入合计
+    try:
+        history = (load_fn or load_history)()
+        today_str = now_bjt().strftime("%Y-%m-%d")
+        is_weekday = now_bjt().weekday() < 5
+        hist_dates = [d for d in history.keys() if d != today_str]
+        def _10d_sum(sector):
+            total = sum((history[d].get(sector) or 0) for d in hist_dates)
+            if is_weekday:
+                cur = show_df.loc[show_df["行业板块"] == sector, "净流入(亿元)"]
+                if len(cur) > 0:
+                    total += float(cur.values[0])
+            return round(total, 2)
+        show_df["10日净流入(亿)"] = show_df["行业板块"].apply(_10d_sum)
+    except Exception:
+        show_df["10日净流入(亿)"] = None
+
     st.subheader("详细数据")
 
     display_cols = [c for c in [
-        "行业板块", "涨跌幅%", "成交额(亿元)", "净流入(亿元)", "净流入率%", "斜率(亿/5min)",
+        "行业板块", "涨跌幅%", "成交额(亿元)", "净流入(亿元)", "10日净流入(亿)", "净流入率%", "斜率(亿/5min)",
         "流入(亿元)", "流出(亿元)", "涨停数", "领涨股", "领涨股涨跌幅%"
     ] if c in show_df.columns]
     fmt = {
@@ -799,6 +816,7 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—", zt_t
         "净流入率%":      "{:+.2f}%",
         "成交额(亿元)":   "{:.2f}",
         "净流入(亿元)":   "{:+.2f}",
+        "10日净流入(亿)": "{:+.2f}",
         "斜率(亿/5min)":  lambda x: f"{x:+.2f}" if x is not None and not pd.isna(x) else "—",
         "流入(亿元)":     "{:.2f}",
         "流出(亿元)":     "{:.2f}",
@@ -957,7 +975,8 @@ def show_main_content():
                 dt_total   = fetch_dt_count(_today)
                 render_fund_flow(df, updated_at, is_open, prev_df, turnover,
                                  zt_total=zt_total, dt_total=dt_total,
-                                 snapshots=st.session_state.get("concept_snapshots", []))
+                                 snapshots=st.session_state.get("concept_snapshots", []),
+                                 load_fn=load_concept_history)
                 show_top5_history(df, load_fn=load_concept_history)
         except Exception as e:
             st.error(f"概念数据获取失败：{e}")
