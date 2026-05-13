@@ -808,7 +808,7 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—", zt_t
     st.subheader("详细数据")
 
     display_cols = [c for c in [
-        "行业板块", "涨跌幅%", "成交额(亿元)", "净流入(亿元)", "10日净流入(亿)", "净流入率%", "斜率(亿/5min)",
+        "行业板块", "10日净流入(亿)", "涨跌幅%", "成交额(亿元)", "净流入(亿元)", "净流入率%", "斜率(亿/5min)",
         "流入(亿元)", "流出(亿元)", "涨停数", "领涨股", "领涨股涨跌幅%"
     ] if c in show_df.columns]
     fmt = {
