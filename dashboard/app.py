@@ -1265,12 +1265,6 @@ def show_top5_history(current_df: pd.DataFrame, load_fn=None):
         use_container_width=True,
     )
 
-    bot5_sum_df = sum_df.nsmallest(10, "10日合计")
-    st.subheader("近10日合计净流出TOP10（亿元）")
-    st.dataframe(
-        bot5_sum_df.style.format(fmt, na_rep="—"),
-        use_container_width=True,
-    )
 
 
 def show_top20_frequency(history: dict, title_prefix: str = "行业板块"):
