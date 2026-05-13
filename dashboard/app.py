@@ -305,14 +305,13 @@ _EM_HEADERS = {
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
-def fetch_zt_count() -> dict:
+def fetch_zt_count(date_str: str) -> dict:
     """用akshare涨停池统计各行业涨停家数"""
     import threading
     result, error = [None], [None]
     def _run():
         try:
-            today = now_bjt().strftime("%Y%m%d")
-            result[0] = ak.stock_zt_pool_em(date=today)
+            result[0] = ak.stock_zt_pool_em(date=date_str)
         except Exception as e:
             error[0] = e
     t = threading.Thread(target=_run, daemon=True)
@@ -327,21 +326,20 @@ def fetch_zt_count() -> dict:
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
-def fetch_zt_total() -> int:
+def fetch_zt_total(date_str: str) -> int:
     """复用已缓存的fetch_zt_count，避免重复调API"""
-    zt_map = fetch_zt_count()
+    zt_map = fetch_zt_count(date_str)
     return sum(zt_map.values()) if zt_map else 0
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
-def fetch_dt_pool() -> "pd.DataFrame":
+def fetch_dt_pool(date_str: str) -> "pd.DataFrame":
     """获取今日跌停池完整数据，供 fetch_dt_count / fetch_dt_sector 复用"""
     import threading
     result, error = [None], [None]
     def _run():
         try:
-            today = now_bjt().strftime("%Y%m%d")
-            result[0] = ak.stock_zt_pool_dtgc_em(date=today)
+            result[0] = ak.stock_zt_pool_dtgc_em(date=date_str)
         except Exception as e:
             error[0] = e
     t = threading.Thread(target=_run, daemon=True)
@@ -352,15 +350,14 @@ def fetch_dt_pool() -> "pd.DataFrame":
     return result[0]
 
 
-def fetch_dt_count() -> int:
+def fetch_dt_count(date_str: str) -> int:
     """今日跌停总家数"""
-    return len(fetch_dt_pool())
+    return len(fetch_dt_pool(date_str))
 
 
-
-def fetch_dt_sector() -> dict:
+def fetch_dt_sector(date_str: str) -> dict:
     """今日各行业跌停家数，返回 {行业: 跌停数}"""
-    df = fetch_dt_pool()
+    df = fetch_dt_pool(date_str)
     if df.empty or "所属行业" not in df.columns:
         return {}
     return df["所属行业"].value_counts().to_dict()
@@ -506,7 +503,7 @@ def fetch_data():
     df["成交额(亿元)"] = df["流入(亿元)"] + df["流出(亿元)"]
     df["净流入率%"] = (df["净流入(亿元)"] / df["成交额(亿元)"].replace(0, float("nan")) * 100).round(2)
 
-    zt_map = fetch_zt_count()
+    zt_map = fetch_zt_count(now_bjt().strftime("%Y%m%d"))
     df["涨停数"] = df["行业板块"].map(zt_map).fillna(0).astype(int)
 
     df = pd.DataFrame(df).drop_duplicates(subset="行业板块")
@@ -859,9 +856,10 @@ def show_main_content():
                         if is_open:
                             save_history(new_df, prev_df=last_df)
                             st.session_state["last_saved_industry_date"] = today_str
-                            zt_snap = fetch_zt_total()
-                            dt_snap = fetch_dt_count()
-                            save_zt_dt_history(zt_snap, dt_snap)
+                            zt_snap = fetch_zt_total(today_str.replace("-", ""))
+                            dt_snap = fetch_dt_count(today_str.replace("-", ""))
+                            if zt_snap > 0 or dt_snap > 0:
+                                save_zt_dt_history(zt_snap, dt_snap)
                         elif is_weekday and st.session_state.get("last_saved_industry_date") != today_str:
                             save_history(new_df, prev_df=last_df)
                             st.session_state["last_saved_industry_date"] = today_str
@@ -885,8 +883,9 @@ def show_main_content():
                     prev_df    = st.session_state.get("prev_df")
                     updated_at = st.session_state.get("last_update", "—")
                     turnover   = st.session_state.get("turnover", "—")
-                    zt_total   = fetch_zt_total()
-                    dt_total   = fetch_dt_count()
+                    _today = now_bjt().strftime("%Y%m%d")
+                    zt_total   = fetch_zt_total(_today)
+                    dt_total   = fetch_dt_count(_today)
                     render_fund_flow(df, updated_at, is_open, prev_df, turnover,
                                      zt_total=zt_total, dt_total=dt_total,
                                      snapshots=st.session_state.get("intraday_snapshots", []))
@@ -953,8 +952,9 @@ def show_main_content():
                 prev_df    = st.session_state.get("prev_concept_df")
                 updated_at = st.session_state.get("last_concept_update", "—")
                 turnover   = st.session_state.get("turnover", "—")
-                zt_total   = fetch_zt_total()
-                dt_total   = fetch_dt_count()
+                _today = now_bjt().strftime("%Y%m%d")
+                zt_total   = fetch_zt_total(_today)
+                dt_total   = fetch_dt_count(_today)
                 render_fund_flow(df, updated_at, is_open, prev_df, turnover,
                                  zt_total=zt_total, dt_total=dt_total,
                                  snapshots=st.session_state.get("concept_snapshots", []))
@@ -1129,8 +1129,9 @@ def show_main_content():
 
     # ── 涨停 / 跌停 Tab ───────────────────────────────────────
     with tab_ztdt:
-        zt_total = fetch_zt_total()
-        dt_total = fetch_dt_count()
+        _today = now_bjt().strftime("%Y%m%d")
+        zt_total = fetch_zt_total(_today)
+        dt_total = fetch_dt_count(_today)
         c1, c2 = st.columns(2)
         c1.metric("今日涨停", f"{zt_total} 只")
         c2.metric("今日跌停", f"{dt_total} 只")
@@ -1139,8 +1140,8 @@ def show_main_content():
         show_zt_dt_trend(zt_total, dt_total)
 
         # 板块明细
-        zt_map = fetch_zt_count()
-        dt_map = fetch_dt_sector()
+        zt_map = fetch_zt_count(_today)
+        dt_map = fetch_dt_sector(_today)
         all_sectors = sorted(set(zt_map) | set(dt_map))
         if all_sectors:
             sector_rows = []
