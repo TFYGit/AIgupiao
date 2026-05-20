@@ -643,6 +643,230 @@ def fetch_auction_data():
     return df
 
 
+@st.cache_data(ttl=REFRESH_INTERVAL)
+def fetch_brent_oil() -> dict:
+    """布伦特原油期货（新浪外盘 OIL），失败时回退日线收盘价"""
+    import threading
+
+    rt_result, rt_err = [None], [None]
+
+    def _run_rt():
+        try:
+            rt_result[0] = ak.futures_foreign_commodity_realtime(symbol="OIL")
+        except Exception as e:
+            rt_err[0] = e
+
+    t = threading.Thread(target=_run_rt, daemon=True)
+    t.start()
+    t.join(20)
+
+    hist = ak.futures_foreign_hist(symbol="OIL")
+    if hist is None or hist.empty:
+        raise ValueError("布伦特原油历史数据为空")
+    hist = hist.copy()
+    hist["date"] = pd.to_datetime(hist["date"], errors="coerce")
+    hist = hist.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+    for col in ["open", "high", "low", "close"]:
+        hist[col] = pd.to_numeric(hist[col], errors="coerce")
+
+    prev_close = float(hist["close"].iloc[-2]) if len(hist) >= 2 else float(hist["close"].iloc[-1])
+    updated_at = now_bjt().strftime("%Y-%m-%d %H:%M:%S")
+    source = "hist"
+
+    if not t.is_alive() and rt_result[0] is not None and not rt_result[0].empty:
+        row = rt_result[0].iloc[0]
+        price = pd.to_numeric(row.get("current_price"), errors="coerce")
+        if pd.notna(price) and float(price) > 0:
+            price = float(price)
+            settle = pd.to_numeric(row.get("last_settle_price"), errors="coerce")
+            base = float(settle) if pd.notna(settle) and float(settle) > 0 else prev_close
+            change = price - base
+            change_pct = change / base * 100 if base else 0.0
+            quote_time = str(row.get("time", "") or "")
+            quote_date = str(row.get("date", "") or "")
+            if quote_time or quote_date:
+                updated_at = f"{quote_date} {quote_time}".strip()
+            return {
+                "price": price, "change": change, "change_pct": change_pct,
+                "high": pd.to_numeric(row.get("high"), errors="coerce"),
+                "low":  pd.to_numeric(row.get("low"), errors="coerce"),
+                "open": pd.to_numeric(row.get("open"), errors="coerce"),
+                "updated_at": updated_at, "hist": hist.tail(60), "source": "realtime",
+            }
+        source = "hist"
+
+    last = hist.iloc[-1]
+    price = float(last["close"])
+    change = price - prev_close
+    change_pct = change / prev_close * 100 if prev_close else 0.0
+    return {
+        "price": price, "change": change, "change_pct": change_pct,
+        "high": float(last["high"]), "low": float(last["low"]), "open": float(last["open"]),
+        "updated_at": f"{last['date'].strftime('%Y-%m-%d')}（日线）",
+        "hist": hist.tail(60), "source": source,
+    }
+
+
+@st.cache_data(ttl=REFRESH_INTERVAL)
+def fetch_us_treasury() -> dict:
+    """美债 10 年期 / 30 年期收益率（东方财富）"""
+    import threading
+    from datetime import date, timedelta
+
+    result, error = [None], [None]
+
+    def _run():
+        try:
+            start = (date.today() - timedelta(days=400)).strftime("%Y%m%d")
+            result[0] = ak.bond_zh_us_rate(start_date=start)
+        except Exception as e:
+            error[0] = e
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(45)
+    if t.is_alive():
+        raise TimeoutError("美债收益率接口超时，稍后重试")
+    if error[0]:
+        raise error[0]
+    df = result[0]
+    if df is None or df.empty:
+        raise ValueError("美债收益率数据为空")
+
+    df = df.copy()
+    df["日期"] = pd.to_datetime(df["日期"], errors="coerce")
+    df = df.dropna(subset=["日期"]).sort_values("日期").reset_index(drop=True)
+    col_10 = "美国国债收益率10年"
+    col_30 = "美国国债收益率30年"
+    for col in [col_10, col_30]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.dropna(subset=[col_10, col_30])
+    if df.empty:
+        raise ValueError("美债收益率解析失败")
+
+    last = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) >= 2 else last
+    y10 = float(last[col_10])
+    y30 = float(last[col_30])
+    return {
+        "date": last["日期"].strftime("%Y-%m-%d"),
+        "y10": y10, "y30": y30,
+        "y10_chg": y10 - float(prev[col_10]),
+        "y30_chg": y30 - float(prev[col_30]),
+        "hist": df.tail(120).rename(columns={col_10: "10年期", col_30: "30年期"}),
+        "updated_at": now_bjt().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+def build_brent_chart(hist: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=hist["date"], y=hist["close"], name="收盘价",
+        line=dict(color="#ef5350", width=2),
+        hovertemplate="%{x|%Y-%m-%d}<br>收盘: %{y:.2f} USD<extra></extra>",
+    ))
+    fig.update_layout(
+        title="布伦特原油 · 近60日收盘价",
+        yaxis_title="USD/桶",
+        height=400,
+        margin=dict(t=50, b=40),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        hovermode="x unified",
+    )
+    return fig
+
+
+def build_treasury_chart(hist: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=hist["日期"], y=hist["10年期"], name="10年期",
+        line=dict(color="#ef5350", width=2),
+        hovertemplate="%{x|%Y-%m-%d}<br>10年期: %{y:.2f}%<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=hist["日期"], y=hist["30年期"], name="30年期",
+        line=dict(color="#42a5f5", width=2),
+        hovertemplate="%{x|%Y-%m-%d}<br>30年期: %{y:.2f}%<extra></extra>",
+    ))
+    fig.update_layout(
+        title="美国国债收益率 · 近120日",
+        yaxis_title="收益率 %",
+        height=400,
+        margin=dict(t=50, b=40),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        legend=dict(orientation="h", y=1.08),
+        hovermode="x unified",
+    )
+    return fig
+
+
+def render_brent_tab():
+    try:
+        data = fetch_brent_oil()
+    except Exception as e:
+        st.error(f"布伦特原油数据获取失败：{e}")
+        return
+
+    src_label = "新浪外盘实时" if data["source"] == "realtime" else "日线收盘（实时暂不可用）"
+    st.caption(f"合约代码 OIL（布伦特原油）　数据来源：{src_label}　更新：{data['updated_at']}")
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("最新价", f"{data['price']:.2f} USD")
+    c2.metric("涨跌", f"{data['change']:+.2f}", delta=f"{data['change_pct']:+.2f}%")
+    if pd.notna(data.get("open")):
+        c3.metric("今开", f"{float(data['open']):.2f}")
+    if pd.notna(data.get("high")):
+        c4.metric("最高", f"{float(data['high']):.2f}")
+    if pd.notna(data.get("low")):
+        c5.metric("最低", f"{float(data['low']):.2f}")
+
+    st.plotly_chart(build_brent_chart(data["hist"]), use_container_width=True)
+
+    show = data["hist"][["date", "open", "high", "low", "close"]].copy()
+    show["date"] = show["date"].dt.strftime("%Y-%m-%d")
+    show = show.iloc[::-1].reset_index(drop=True)
+    show.index += 1
+    show.columns = ["日期", "开盘", "最高", "最低", "收盘"]
+    st.subheader("近60日行情")
+    st.dataframe(
+        show.style.format({"开盘": "{:.2f}", "最高": "{:.2f}", "最低": "{:.2f}", "收盘": "{:.2f}"}),
+        use_container_width=True,
+        height=400,
+    )
+
+
+def render_treasury_tab():
+    try:
+        data = fetch_us_treasury()
+    except Exception as e:
+        st.error(f"美债收益率数据获取失败：{e}")
+        return
+
+    st.caption(f"数据日期：{data['date']}　数据来源：东方财富　页面刷新：{data['updated_at']}")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("10年期", f"{data['y10']:.2f}%", delta=f"{data['y10_chg']:+.2f}%")
+    c2.metric("30年期", f"{data['y30']:.2f}%", delta=f"{data['y30_chg']:+.2f}%")
+    spread = data["y30"] - data["y10"]
+    c3.metric("30Y-10Y 利差", f"{spread:.2f}%")
+    c4.metric("10年期日变动", f"{data['y10_chg']:+.2f}%")
+
+    st.plotly_chart(build_treasury_chart(data["hist"]), use_container_width=True)
+
+    show = data["hist"][["日期", "10年期", "30年期"]].copy()
+    show["日期"] = show["日期"].dt.strftime("%Y-%m-%d")
+    show = show.iloc[::-1].reset_index(drop=True)
+    show.index += 1
+    st.subheader("近120日收益率")
+    st.dataframe(
+        show.style.format({"10年期": "{:.2f}%", "30年期": "{:.2f}%"}),
+        use_container_width=True,
+        height=400,
+    )
+
+
 # ---- 图表 ----
 
 def build_fund_flow_chart(df):
@@ -834,7 +1058,10 @@ def show_main_content():
     is_open    = is_market_open()
     is_auction = is_auction_time()
 
-    tab_industry, tab_concept, tab_ztdt, tab_lhb, tab_freq = st.tabs(["📈 行业板块", "💡 概念板块", "🔴 涨停 / 跌停", "🐉 龙虎榜", "🏆 强势板块统计"])
+    tab_industry, tab_concept, tab_ztdt, tab_lhb, tab_freq, tab_brent, tab_treasury = st.tabs([
+        "📈 行业板块", "💡 概念板块", "🔴 涨停 / 跌停", "🐉 龙虎榜", "🏆 强势板块统计",
+        "🛢️ 布伦特原油", "🇺🇸 美债利率",
+    ])
 
     # ── 行业板块 Tab ──────────────────────────────────────────
     with tab_industry:
@@ -1145,6 +1372,14 @@ def show_main_content():
             show_top20_frequency(con_hist, "概念板块")
         except Exception as e:
             st.error(f"强势板块统计加载失败：{e}")
+
+    # ── 布伦特原油 Tab ────────────────────────────────────────
+    with tab_brent:
+        render_brent_tab()
+
+    # ── 美债利率 Tab ──────────────────────────────────────────
+    with tab_treasury:
+        render_treasury_tab()
 
     # ── 涨停 / 跌停 Tab ───────────────────────────────────────
     with tab_ztdt:
