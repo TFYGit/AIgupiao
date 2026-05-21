@@ -758,6 +758,55 @@ def fetch_us_treasury() -> dict:
     }
 
 
+@st.cache_data(ttl=REFRESH_INTERVAL)
+def fetch_us_inflation() -> dict:
+    """美国 CPI 同比（通胀率），来源：金十 / 东方财富宏观"""
+    import threading
+
+    result, error = [None], [None]
+
+    def _run():
+        try:
+            result[0] = ak.macro_usa_cpi_yoy()
+        except Exception as e:
+            error[0] = e
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(30)
+    if t.is_alive():
+        raise TimeoutError("美国CPI数据接口超时，稍后重试")
+    if error[0]:
+        raise error[0]
+    df = result[0]
+    if df is None or df.empty:
+        raise ValueError("美国CPI数据为空")
+
+    df = df.copy()
+    df["现值"] = pd.to_numeric(df["现值"], errors="coerce")
+    df["前值"] = pd.to_numeric(df["前值"], errors="coerce")
+    df["发布日期"] = pd.to_datetime(df["发布日期"], errors="coerce")
+    df = df.dropna(subset=["现值", "发布日期"]).sort_values("发布日期").reset_index(drop=True)
+    if df.empty:
+        raise ValueError("美国CPI解析失败")
+
+    last = df.iloc[-1]
+    cpi = float(last["现值"])
+    prev_cpi = float(last["前值"]) if pd.notna(last["前值"]) else cpi
+    period = str(last.get("时间", ""))
+    if len(period) >= 7:
+        period = period[:7]
+    return {
+        "cpi_yoy": cpi,
+        "cpi_chg": cpi - prev_cpi,
+        "prev_cpi": prev_cpi,
+        "release_date": last["发布日期"].strftime("%Y-%m-%d"),
+        "period": period,
+        "hist": df.tail(48),
+        "updated_at": now_bjt().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
 def build_brent_chart(hist: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -790,13 +839,36 @@ def build_treasury_chart(hist: pd.DataFrame) -> go.Figure:
         hovertemplate="%{x|%Y-%m-%d}<br>30年期: %{y:.2f}%<extra></extra>",
     ))
     fig.update_layout(
-        title="美国国债收益率 · 近120日",
+        title=dict(text="美债收益率", font=dict(size=14)),
         yaxis_title="收益率 %",
-        height=400,
-        margin=dict(t=50, b=40),
-        plot_bgcolor="rgba(0,0,0,0)",
+        height=360,
+        margin=dict(t=40, b=30, l=50, r=20),
+        plot_bgcolor="rgba(248,249,250,0.5)",
         paper_bgcolor="rgba(0,0,0,0)",
-        legend=dict(orientation="h", y=1.08),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        hovermode="x unified",
+    )
+    return fig
+
+
+def build_inflation_chart(hist: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=hist["发布日期"], y=hist["现值"], name="CPI同比",
+        mode="lines+markers",
+        line=dict(color="#ff9800", width=2),
+        marker=dict(size=5),
+        fill="tozeroy",
+        fillcolor="rgba(255,152,0,0.12)",
+        hovertemplate="%{x|%Y-%m-%d}<br>CPI同比: %{y:.1f}%<extra></extra>",
+    ))
+    fig.update_layout(
+        title=dict(text="CPI 同比（通胀率）", font=dict(size=14)),
+        yaxis_title="同比 %",
+        height=360,
+        margin=dict(t=40, b=30, l=50, r=20),
+        plot_bgcolor="rgba(248,249,250,0.5)",
+        paper_bgcolor="rgba(0,0,0,0)",
         hovermode="x unified",
     )
     return fig
@@ -838,33 +910,100 @@ def render_brent_tab():
 
 
 def render_treasury_tab():
+    st.markdown("##### 美国宏观 · 利率与通胀")
+    st.caption("美债收益率（东方财富）　·　CPI 同比（金十宏观）")
+
+    treasury, inflation = None, None
+    err_t, err_i = None, None
     try:
-        data = fetch_us_treasury()
+        treasury = fetch_us_treasury()
     except Exception as e:
-        st.error(f"美债收益率数据获取失败：{e}")
+        err_t = str(e)
+    try:
+        inflation = fetch_us_inflation()
+    except Exception as e:
+        err_i = str(e)
+
+    if treasury is None and inflation is None:
+        st.error(f"数据加载失败：美债 — {err_t}；通胀 — {err_i}")
         return
 
-    st.caption(f"数据日期：{data['date']}　数据来源：东方财富　页面刷新：{data['updated_at']}")
+    # ── 指标卡片：美债 | 通胀 ──
+    left, right = st.columns(2, gap="medium")
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("10年期", f"{data['y10']:.2f}%", delta=f"{data['y10_chg']:+.2f}%")
-    c2.metric("30年期", f"{data['y30']:.2f}%", delta=f"{data['y30_chg']:+.2f}%")
-    spread = data["y30"] - data["y10"]
-    c3.metric("30Y-10Y 利差", f"{spread:.2f}%")
-    c4.metric("10年期日变动", f"{data['y10_chg']:+.2f}%")
+    with left:
+        st.markdown("**美债收益率**")
+        if treasury:
+            spread = treasury["y30"] - treasury["y10"]
+            r1a, r1b, r1c = st.columns(3)
+            r1a.metric("10 年期", f"{treasury['y10']:.2f}%", delta=f"{treasury['y10_chg']:+.2f}%")
+            r1b.metric("30 年期", f"{treasury['y30']:.2f}%", delta=f"{treasury['y30_chg']:+.2f}%")
+            r1c.metric("30Y−10Y", f"{spread:.2f}%")
+            st.caption(f"数据日 {treasury['date']}")
+        else:
+            st.warning(f"美债：{err_t}")
 
-    st.plotly_chart(build_treasury_chart(data["hist"]), use_container_width=True)
+    with right:
+        st.markdown("**通胀（CPI 同比）**")
+        if inflation:
+            r2a, r2b, r2c = st.columns(3)
+            r2a.metric("最新同比", f"{inflation['cpi_yoy']:.1f}%", delta=f"{inflation['cpi_chg']:+.1f}%")
+            r2b.metric("前值", f"{inflation['prev_cpi']:.1f}%")
+            r2c.metric("统计月", inflation["period"] or "—")
+            st.caption(f"发布日 {inflation['release_date']}")
+        else:
+            st.warning(f"通胀：{err_i}")
 
-    show = data["hist"][["日期", "10年期", "30年期"]].copy()
-    show["日期"] = show["日期"].dt.strftime("%Y-%m-%d")
-    show = show.iloc[::-1].reset_index(drop=True)
-    show.index += 1
-    st.subheader("近120日收益率")
-    st.dataframe(
-        show.style.format({"10年期": "{:.2f}%", "30年期": "{:.2f}%"}),
-        use_container_width=True,
-        height=400,
-    )
+    if treasury or inflation:
+        updated = (treasury or inflation)["updated_at"]
+        st.caption(f"页面刷新：{updated}")
+
+    st.divider()
+
+    # ── 双图并排 ──
+    chart_l, chart_r = st.columns(2, gap="medium")
+    with chart_l:
+        if treasury:
+            st.plotly_chart(build_treasury_chart(treasury["hist"]), use_container_width=True)
+        else:
+            st.info("美债走势图暂不可用")
+    with chart_r:
+        if inflation:
+            st.plotly_chart(build_inflation_chart(inflation["hist"]), use_container_width=True)
+        else:
+            st.info("通胀走势图暂不可用")
+
+    st.divider()
+
+    # ── 明细表 ──
+    tab_yield, tab_cpi = st.tabs(["📋 美债历史", "📋 CPI 同比历史"])
+    with tab_yield:
+        if treasury:
+            show = treasury["hist"][["日期", "10年期", "30年期"]].copy()
+            show["日期"] = show["日期"].dt.strftime("%Y-%m-%d")
+            show = show.iloc[::-1].reset_index(drop=True)
+            show.index += 1
+            st.dataframe(
+                show.style.format({"10年期": "{:.2f}%", "30年期": "{:.2f}%"}),
+                use_container_width=True,
+                height=360,
+            )
+        else:
+            st.info("暂无美债明细")
+    with tab_cpi:
+        if inflation:
+            show = inflation["hist"][["发布日期", "时间", "现值", "前值"]].copy()
+            show["发布日期"] = show["发布日期"].dt.strftime("%Y-%m-%d")
+            show = show.iloc[::-1].reset_index(drop=True)
+            show.index += 1
+            show.columns = ["发布日期", "统计月", "CPI同比%", "前值%"]
+            st.dataframe(
+                show.style.format({"CPI同比%": "{:.1f}%", "前值%": "{:.1f}%"}),
+                use_container_width=True,
+                height=360,
+            )
+        else:
+            st.info("暂无通胀明细")
 
 
 # ---- 图表 ----
@@ -1060,7 +1199,7 @@ def show_main_content():
 
     tab_industry, tab_concept, tab_ztdt, tab_lhb, tab_freq, tab_brent, tab_treasury = st.tabs([
         "📈 行业板块", "💡 概念板块", "🔴 涨停 / 跌停", "🐉 龙虎榜", "🏆 强势板块统计",
-        "🛢️ 布伦特原油", "🇺🇸 美债利率",
+        "🛢️ 布伦特原油", "🇺🇸 美债·通胀",
     ])
 
     # ── 行业板块 Tab ──────────────────────────────────────────
