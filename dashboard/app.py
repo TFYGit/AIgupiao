@@ -1603,23 +1603,80 @@ def show_consecutive_two_day_inflow(current_df: pd.DataFrame, load_fn=None):
 
     if not rows:
         st.info(f"{previous_date} 与 {latest_date} 没有连续净流入为正的板块。")
+    else:
+        result_df = (
+            pd.DataFrame(rows)
+            .sort_values("两日合计", ascending=False)
+            .reset_index(drop=True)
+        )
+        result_df.index += 1
+        st.caption(
+            f"共 {len(result_df)} 个板块；筛选依据为最近两日净流入均大于 0，"
+            f"表格展示最近 {len(display_dates)} 个交易日，按两日合计从高到低排列。"
+        )
+        value_cols = [c for c in result_df.columns if c != "板块名称"]
+        st.dataframe(
+            result_df.style.format({c: "{:+.2f}" for c in value_cols}),
+            use_container_width=True,
+            height=min(40 * len(result_df) + 40, 700),
+        )
+
+    st.divider()
+    st.subheader("最近3个交易日至少2日净流入为正的板块（亿元）")
+    if len(trading_dates) < 3:
+        st.info("历史数据不足三个交易日，暂时无法进行统计。")
         return
 
-    result_df = (
-        pd.DataFrame(rows)
-        .sort_values("两日合计", ascending=False)
+    recent_three_dates = trading_dates[:3]
+    three_day_sectors = set(daily_data[recent_three_dates[0]])
+    for date in recent_three_dates[1:]:
+        three_day_sectors &= set(daily_data[date])
+
+    three_day_rows = []
+    for sector in sorted(three_day_sectors):
+        recent_values = [
+            pd.to_numeric(daily_data[date].get(sector), errors="coerce")
+            for date in recent_three_dates
+        ]
+        if any(pd.isna(value) for value in recent_values):
+            continue
+        positive_days = sum(value > 0 for value in recent_values)
+        if positive_days < 2:
+            continue
+
+        row = {"板块名称": sector}
+        for date in display_dates:
+            value = pd.to_numeric(daily_data[date].get(sector), errors="coerce")
+            column = date + ("（实时）" if date == today else "")
+            row[column] = round(float(value), 2) if pd.notna(value) else None
+        row["近3日正流入天数"] = positive_days
+        row["三日合计"] = round(float(sum(recent_values)), 2)
+        three_day_rows.append(row)
+
+    if not three_day_rows:
+        st.info("最近三个交易日没有至少两日净流入为正的板块。")
+        return
+
+    three_day_df = (
+        pd.DataFrame(three_day_rows)
+        .sort_values(["近3日正流入天数", "三日合计"], ascending=[False, False])
         .reset_index(drop=True)
     )
-    result_df.index += 1
+    three_day_df.index += 1
     st.caption(
-        f"共 {len(result_df)} 个板块；筛选依据为最近两日净流入均大于 0，"
-        f"表格展示最近 {len(display_dates)} 个交易日，按两日合计从高到低排列。"
+        f"共 {len(three_day_df)} 个板块；表格展示最近 {len(display_dates)} 个交易日，"
+        "按近3日正流入天数、三日合计从高到低排列。"
     )
-    value_cols = [c for c in result_df.columns if c != "板块名称"]
+    amount_cols = [
+        c for c in three_day_df.columns
+        if c not in ["板块名称", "近3日正流入天数"]
+    ]
     st.dataframe(
-        result_df.style.format({c: "{:+.2f}" for c in value_cols}),
+        three_day_df.style.format(
+            {**{c: "{:+.2f}" for c in amount_cols}, "近3日正流入天数": "{:.0f}"}
+        ),
         use_container_width=True,
-        height=min(40 * len(result_df) + 40, 700),
+        height=min(40 * len(three_day_df) + 40, 700),
     )
 
 
