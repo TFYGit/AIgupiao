@@ -1557,7 +1557,7 @@ def show_main_content():
 
 
 def show_consecutive_two_day_inflow(current_df: pd.DataFrame, load_fn=None):
-    """展示最近两个交易日净流入均大于 0 的板块。"""
+    """筛选连续两日净流入为正的板块，并展示其近五日数据。"""
     history = (load_fn or load_history)()
     today = now_bjt().strftime("%Y-%m-%d")
 
@@ -1583,6 +1583,7 @@ def show_consecutive_two_day_inflow(current_df: pd.DataFrame, load_fn=None):
         return
 
     latest_date, previous_date = trading_dates[:2]
+    display_dates = trading_dates[:5]
     latest = daily_data[latest_date]
     previous = daily_data[previous_date]
     sectors = sorted(set(latest) & set(previous))
@@ -1592,12 +1593,13 @@ def show_consecutive_two_day_inflow(current_df: pd.DataFrame, load_fn=None):
         latest_value = pd.to_numeric(latest.get(sector), errors="coerce")
         previous_value = pd.to_numeric(previous.get(sector), errors="coerce")
         if pd.notna(latest_value) and pd.notna(previous_value) and latest_value > 0 and previous_value > 0:
-            rows.append({
-                "板块名称": sector,
-                latest_date + ("（实时）" if latest_date == today else ""): round(float(latest_value), 2),
-                previous_date: round(float(previous_value), 2),
-                "两日合计": round(float(latest_value + previous_value), 2),
-            })
+            row = {"板块名称": sector}
+            for date in display_dates:
+                value = pd.to_numeric(daily_data[date].get(sector), errors="coerce")
+                column = date + ("（实时）" if date == today else "")
+                row[column] = round(float(value), 2) if pd.notna(value) else None
+            row["两日合计"] = round(float(latest_value + previous_value), 2)
+            rows.append(row)
 
     if not rows:
         st.info(f"{previous_date} 与 {latest_date} 没有连续净流入为正的板块。")
@@ -1609,7 +1611,10 @@ def show_consecutive_two_day_inflow(current_df: pd.DataFrame, load_fn=None):
         .reset_index(drop=True)
     )
     result_df.index += 1
-    st.caption(f"共 {len(result_df)} 个板块，按两日净流入合计从高到低排列。")
+    st.caption(
+        f"共 {len(result_df)} 个板块；筛选依据为最近两日净流入均大于 0，"
+        f"表格展示最近 {len(display_dates)} 个交易日，按两日合计从高到低排列。"
+    )
     value_cols = [c for c in result_df.columns if c != "板块名称"]
     st.dataframe(
         result_df.style.format({c: "{:+.2f}" for c in value_cols}),
