@@ -1273,7 +1273,7 @@ def show_main_content():
                     render_fund_flow(df, updated_at, is_open, prev_df, turnover,
                                      zt_total=zt_total, dt_total=dt_total,
                                      snapshots=st.session_state.get("intraday_snapshots", []))
-                    show_top5_history(df)
+                    show_consecutive_two_day_inflow(df)
             except Exception as e:
                 st.error(f"数据获取失败：{e}")
 
@@ -1343,7 +1343,7 @@ def show_main_content():
                                  zt_total=zt_total, dt_total=dt_total,
                                  snapshots=st.session_state.get("concept_snapshots", []),
                                  load_fn=load_concept_history)
-                show_top5_history(df, load_fn=load_concept_history)
+                show_consecutive_two_day_inflow(df, load_fn=load_concept_history)
         except Exception as e:
             st.error(f"概念数据获取失败：{e}")
 
@@ -1556,106 +1556,65 @@ def show_main_content():
 
 
 
-def show_top5_history(current_df: pd.DataFrame, load_fn=None):
-    """页面底部展示近10日净流入TOP5趋势"""
-    current_df = current_df.drop_duplicates(subset="行业板块")
-    today = now_bjt().strftime("%Y-%m-%d")
+def show_consecutive_two_day_inflow(current_df: pd.DataFrame, load_fn=None):
+    """展示最近两个交易日净流入均大于 0 的板块。"""
     history = (load_fn or load_history)()
+    today = now_bjt().strftime("%Y-%m-%d")
 
-    # 今日TOP5行业
-    industries = current_df.nlargest(5, "净流入(亿元)")["行业板块"].tolist()
+    # 工作日使用实时数据覆盖数据库中的今日快照；非工作日仅使用历史交易日。
+    daily_data = {d: dict(values) for d, values in history.items() if values}
+    if now_bjt().weekday() < 5 and current_df is not None and not current_df.empty:
+        current = (
+            current_df.drop_duplicates(subset="行业板块")
+            .set_index("行业板块")["净流入(亿元)"]
+        )
+        daily_data[today] = {
+            str(sector): round(float(value), 2)
+            for sector, value in current.items()
+            if pd.notna(value)
+        }
 
-    # 历史日期（不含今日，避免重复）
-    hist_dates = sorted(d for d in history.keys() if d != today)
-
-    # 非工作日不加"实时"列（避免把前一交易日数据重复显示）
-    is_weekday = now_bjt().weekday() < 5
-
-    # 构建表格：行=行业，列=历史日期+今日实时（仅工作日）
-    rows = []
-    for ind in industries:
-        row = {"行业板块": ind}
-        for d in hist_dates:
-            val = history[d].get(ind)
-            row[d] = val
-        if is_weekday:
-            cur = current_df.loc[current_df["行业板块"] == ind, "净流入(亿元)"]
-            row[today + "（实时）"] = round(float(cur.values[0]), 2) if len(cur) > 0 else None
-        rows.append(row)
-
-    table_df = pd.DataFrame(rows).set_index("行业板块")
-    # 最新数据（实时）放第一列，历史日期降序排列
-    today_col = today + "（实时）"
-    hist_cols = sorted(hist_dates, reverse=True)
-    ordered_cols = [c for c in ([today_col] if is_weekday else []) + hist_cols if c in table_df.columns]
-    table_df = table_df[ordered_cols]
-
-    # 5日净值合计列
-    table_df["10日合计"] = table_df[ordered_cols].apply(
-        lambda row: round(row.dropna().sum(), 2), axis=1
-    )
-
+    trading_dates = sorted(daily_data.keys(), reverse=True)
     st.divider()
-    st.subheader("净流入TOP5 · 近10日统计（亿元）")
+    st.subheader("连续2个交易日净流入为正的板块（亿元）")
 
-    def fmt(v):
-        try:
-            if v is None or pd.isna(v):
-                return "—"
-        except (TypeError, ValueError):
-            return "—"
-        return f"{v:+.2f}"
+    if len(trading_dates) < 2:
+        st.info("历史数据不足两个交易日，暂时无法判断连续净流入。")
+        return
 
-    st.dataframe(
-        table_df.style.format(fmt, na_rep="—"),
-        use_container_width=True,
+    latest_date, previous_date = trading_dates[:2]
+    latest = daily_data[latest_date]
+    previous = daily_data[previous_date]
+    sectors = sorted(set(latest) & set(previous))
+
+    rows = []
+    for sector in sectors:
+        latest_value = pd.to_numeric(latest.get(sector), errors="coerce")
+        previous_value = pd.to_numeric(previous.get(sector), errors="coerce")
+        if pd.notna(latest_value) and pd.notna(previous_value) and latest_value > 0 and previous_value > 0:
+            rows.append({
+                "板块名称": sector,
+                latest_date + ("（实时）" if latest_date == today else ""): round(float(latest_value), 2),
+                previous_date: round(float(previous_value), 2),
+                "两日合计": round(float(latest_value + previous_value), 2),
+            })
+
+    if not rows:
+        st.info(f"{previous_date} 与 {latest_date} 没有连续净流入为正的板块。")
+        return
+
+    result_df = (
+        pd.DataFrame(rows)
+        .sort_values("两日合计", ascending=False)
+        .reset_index(drop=True)
     )
-
-    # 净流出TOP5
-    bot_industries = current_df.nsmallest(5, "净流入(亿元)")["行业板块"].tolist()
-    bot_rows = []
-    for ind in bot_industries:
-        row = {"行业板块": ind}
-        for d in hist_dates:
-            val = history[d].get(ind)
-            row[d] = val
-        if is_weekday:
-            cur = current_df.loc[current_df["行业板块"] == ind, "净流入(亿元)"]
-            row[today_col] = round(float(cur.values[0]), 2) if len(cur) > 0 else None
-        bot_rows.append(row)
-
-    bot_df = pd.DataFrame(bot_rows).set_index("行业板块")
-    bot_df = bot_df[[c for c in ([today_col] if is_weekday else []) + hist_cols if c in bot_df.columns]]
-    bot_df["10日合计"] = bot_df.apply(lambda row: round(row.dropna().sum(), 2), axis=1)
-
-    st.subheader("净流出TOP5 · 近10日统计（亿元）")
+    result_df.index += 1
+    st.caption(f"共 {len(result_df)} 个板块，按两日净流入合计从高到低排列。")
+    value_cols = [c for c in result_df.columns if c != "板块名称"]
     st.dataframe(
-        bot_df.style.format(fmt, na_rep="—"),
+        result_df.style.format({c: "{:+.2f}" for c in value_cols}),
         use_container_width=True,
-    )
-
-    # 近10日合计流入TOP5：基于历史+实时数据，取合计最大的5个行业
-    all_industries = current_df["行业板块"].tolist()
-    sum_rows = []
-    for ind in all_industries:
-        row = {"行业板块": ind}
-        for d in hist_dates:
-            val = history[d].get(ind)
-            row[d] = val
-        if is_weekday:
-            cur = current_df.loc[current_df["行业板块"] == ind, "净流入(亿元)"]
-            row[today_col] = round(float(cur.values[0]), 2) if len(cur) > 0 else None
-        sum_rows.append(row)
-
-    sum_df = pd.DataFrame(sum_rows).set_index("行业板块")
-    sum_df = sum_df[[c for c in ([today_col] if is_weekday else []) + hist_cols if c in sum_df.columns]]
-    sum_df["10日合计"] = sum_df.apply(lambda row: round(row.dropna().sum(), 2), axis=1)
-    top5_sum_df = sum_df.nlargest(5, "10日合计")
-
-    st.subheader("近10日合计净流入TOP5（亿元）")
-    st.dataframe(
-        top5_sum_df.style.format(fmt, na_rep="—"),
-        use_container_width=True,
+        height=min(40 * len(result_df) + 40, 700),
     )
 
 
