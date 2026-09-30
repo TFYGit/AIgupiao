@@ -472,35 +472,79 @@ def fetch_dzjy_data() -> tuple:
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_data():
     import threading
-    result, error = [None], [None]
-    def _run():
+    flow_result, flow_error = [None], [None]
+    summary_result, summary_error = [None], [None]
+
+    def _fetch_flow():
         try:
-            result[0] = ak.stock_fund_flow_industry(symbol="即时")
+            flow_result[0] = ak.stock_fund_flow_industry(symbol="即时")
         except Exception as e:
-            error[0] = e
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    t.join(30)
-    if t.is_alive():
+            flow_error[0] = e
+
+    def _fetch_summary():
+        try:
+            summary_result[0] = ak.stock_board_industry_summary_ths()
+        except Exception as e:
+            summary_error[0] = e
+
+    flow_thread = threading.Thread(target=_fetch_flow, daemon=True)
+    summary_thread = threading.Thread(target=_fetch_summary, daemon=True)
+    flow_thread.start()
+    summary_thread.start()
+    flow_thread.join(45)
+    summary_thread.join(45)
+
+    if flow_thread.is_alive():
         raise TimeoutError("行业资金流向接口超时，稍后重试")
-    if error[0]:
-        raise error[0]
-    df = result[0]
+    if flow_error[0]:
+        raise flow_error[0]
+    df = flow_result[0]
     if df is None or df.empty:
         raise ValueError("行业数据为空，稍后重试")
 
     df = df.rename(columns={
         "行业": "行业板块",
         "行业-涨跌幅": "涨跌幅%",
-        "净额": "净流入(亿元)",
+        "净额": "资金流净额(亿元)",
         "流入资金": "流入(亿元)",
         "流出资金": "流出(亿元)",
         "领涨股-涨跌幅": "领涨股涨跌幅%",
     })
-    for col in ["净流入(亿元)", "流入(亿元)", "流出(亿元)", "涨跌幅%"]:
+    for col in ["资金流净额(亿元)", "流入(亿元)", "流出(亿元)", "涨跌幅%"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-    df["成交额(亿元)"] = df["流入(亿元)"] + df["流出(亿元)"]
+
+    # 同花顺行业一览直接提供真实总成交额、总成交量和净流入。
+    # 一览接口失败或个别板块名称无法匹配时保留资金流数据，但不再用流入+流出冒充成交额。
+    df["行业板块"] = df["行业板块"].astype(str).str.strip()
+    summary_df = summary_result[0]
+    if (not summary_thread.is_alive() and summary_error[0] is None
+            and summary_df is not None and not summary_df.empty):
+        summary_df = summary_df.rename(columns={
+            "板块": "行业板块",
+            "总成交量": "成交量(万手)",
+            "总成交额": "成交额(亿元)",
+            "净流入": "净流入(亿元)",
+        })
+        summary_cols = [
+            c for c in ["行业板块", "成交量(万手)", "成交额(亿元)", "净流入(亿元)"]
+            if c in summary_df.columns
+        ]
+        if "行业板块" in summary_cols:
+            summary_df = summary_df[summary_cols].copy()
+            summary_df["行业板块"] = summary_df["行业板块"].astype(str).str.strip()
+            summary_df = summary_df.drop_duplicates(subset="行业板块")
+            for col in ["成交量(万手)", "成交额(亿元)", "净流入(亿元)"]:
+                if col in summary_df.columns:
+                    summary_df[col] = pd.to_numeric(summary_df[col], errors="coerce")
+            df = df.merge(summary_df, on="行业板块", how="left")
+    # 上游字段调整或接口失败时保留资金流数据，并安全降级缺失字段。
+    for col in ["成交量(万手)", "成交额(亿元)", "净流入(亿元)"]:
+        if col not in df.columns:
+            df[col] = float("nan")
+
+    # 净流入优先用行业一览值，未匹配到时退回原资金流接口的净额。
+    df["净流入(亿元)"] = df["净流入(亿元)"].fillna(df["资金流净额(亿元)"])
     df["净流入率%"] = (df["净流入(亿元)"] / df["成交额(亿元)"].replace(0, float("nan")) * 100).round(2)
 
     zt_map = fetch_zt_count(now_bjt().strftime("%Y%m%d"))
@@ -1185,6 +1229,11 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—", zt_t
         "流出(亿元)":     "{:.2f}",
         "领涨股涨跌幅%":  "{:+.2f}%",
     }
+    if "成交量(万手)" in show_df.columns and "成交量(万手)" not in display_cols:
+        amount_index = display_cols.index("成交额(亿元)") if "成交额(亿元)" in display_cols else 2
+        display_cols.insert(amount_index + 1, "成交量(万手)")
+        fmt["成交量(万手)"] = "{:.2f}"
+
     st.dataframe(
         show_df[display_cols].style.format({k: v for k, v in fmt.items() if k in display_cols}, na_rep="—"),
         use_container_width=True,
