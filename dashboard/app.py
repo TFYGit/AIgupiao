@@ -1440,14 +1440,49 @@ def render_industry_rotation(df: pd.DataFrame, updated_at: str, source_status: s
     matrix.columns.name = None
     st.dataframe(matrix, use_container_width=True, hide_index=True, height=900)
 
-    with st.expander("查看全部600条排名记录"):
-        detail = df[["交易日期", "排名", "板块代码", "行业板块", "主力净流入(亿元)"]].copy()
-        st.dataframe(
-            detail.style.format({"主力净流入(亿元)": "{:+.2f}"}),
-            use_container_width=True,
-            hide_index=True,
-            height=700,
+    st.subheader("当日TOP10 · 近60个交易日轮动次数")
+    st.caption("轮动次数指该行业在当前展示的交易日范围内进入主力净流入TOP10的天数。")
+    rotation_counts = (
+        df.groupby("板块代码", as_index=False)
+        .agg(
+            **{
+                "60日轮动次数": ("交易日期", "nunique"),
+                "期间最佳排名": ("排名", "min"),
+            }
         )
+    )
+    latest_rotation = (
+        latest[["排名", "板块代码", "行业板块", "主力净流入(亿元)"]]
+        .merge(rotation_counts, on="板块代码", how="left")
+        .rename(columns={"排名": "当日排名", "主力净流入(亿元)": "当日主力净流入(亿元)"})
+        .sort_values("当日排名")
+    )
+    latest_rotation["60日入榜率"] = (
+        latest_rotation["60日轮动次数"] / len(dates) * 100
+    ).round(1)
+    latest_rotation["60日轮动次数"] = latest_rotation["60日轮动次数"].fillna(0).astype(int)
+    latest_rotation["期间最佳排名"] = latest_rotation["期间最佳排名"].fillna(0).astype(int)
+    st.dataframe(
+        latest_rotation,
+        column_order=[
+            "当日排名", "行业板块", "板块代码", "当日主力净流入(亿元)",
+            "60日轮动次数", "60日入榜率", "期间最佳排名",
+        ],
+        column_config={
+            "当日主力净流入(亿元)": st.column_config.NumberColumn(format="%+.2f"),
+            "60日轮动次数": st.column_config.ProgressColumn(
+                "60日轮动次数",
+                help="最近60个交易日进入主力净流入TOP10的天数",
+                min_value=0,
+                max_value=len(dates),
+                format="%d 次",
+            ),
+            "60日入榜率": st.column_config.NumberColumn(format="%.1f%%"),
+        },
+        use_container_width=True,
+        hide_index=True,
+        height=388,
+    )
 
 
 @st.fragment(run_every=AUCTION_INTERVAL)
