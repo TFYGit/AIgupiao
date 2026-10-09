@@ -29,6 +29,7 @@ AUCTION_START = (9, 15)
 AUCTION_END   = (9, 25)
 MARKET_CLOSE  = (15, 30)
 AUCTION_INTERVAL = 60        # 集合竞价1分钟刷新
+ROTATION_REFRESH_INTERVAL = 120  # 行业轮动2分钟请求一次
 
 
 def is_trading_time() -> bool:
@@ -577,6 +578,137 @@ def fetch_data():
         turnover = "—"
     updated_at = now_bjt().strftime("%Y-%m-%d %H:%M:%S")
     return df, updated_at, turnover
+
+
+@st.cache_data(ttl=ROTATION_REFRESH_INTERVAL)
+def fetch_industry_rotation():
+    """获取东方财富 APP 行业轮动：最近60个交易日主力净流入 TOP10。"""
+    url = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
+    params = {
+        "reportName": "RPT_BOARD_WHEEL",
+        "columns": "BOARD_CODE,BOARD_NAME,TRADE_DATE,INDICATORID,INDICATORID_RANK,COMMON_TYPE3",
+        "filter": '(COMMON_TYPE1="003")(COMMON_TYPE2="2")(COMMON_TYPE3="01")(INDICATORID_RANK<=10)',
+        "source": "SECURITIES",
+        "client": "APP",
+        "sortColumns": "TRADE_DATE,INDICATORID_RANK,COMMON_TYPE3",
+        "sortTypes": "1,1,1",
+    }
+    resp = requests.get(
+        url,
+        params=params,
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://emdata.eastmoney.com/appdc/bkld/index.html",
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    if not payload.get("success"):
+        raise ValueError(payload.get("message") or "行业轮动接口返回失败")
+
+    rows = ((payload.get("result") or {}).get("data") or [])
+    if not rows:
+        raise ValueError("行业轮动数据为空")
+
+    df = pd.DataFrame(rows).rename(columns={
+        "BOARD_CODE": "板块代码",
+        "BOARD_NAME": "行业板块",
+        "TRADE_DATE": "交易日期",
+        "INDICATORID": "主力净流入(元)",
+        "INDICATORID_RANK": "排名",
+    })
+    required = ["板块代码", "行业板块", "交易日期", "主力净流入(元)", "排名"]
+    missing = [col for col in required if col not in df.columns]
+    if missing:
+        raise ValueError(f"行业轮动接口缺少字段：{', '.join(missing)}")
+
+    df["交易日期"] = pd.to_datetime(df["交易日期"], errors="coerce").dt.strftime("%Y-%m-%d")
+    df["主力净流入(元)"] = pd.to_numeric(df["主力净流入(元)"], errors="coerce")
+    df["主力净流入(亿元)"] = (df["主力净流入(元)"] / 1e8).round(2)
+    df["排名"] = pd.to_numeric(df["排名"], errors="coerce")
+    df = df.dropna(subset=["交易日期", "行业板块", "主力净流入(亿元)", "排名"])
+    df["排名"] = df["排名"].astype(int)
+
+    live_status = "历史报表"
+    try:
+        live_params = {
+            "ut": "a1f568701ae683c054e7fa0b13833a5d",
+            "fltt": 2,
+            "invt": 2,
+            "fields": "f62,f12,f14,f124,f223",
+            "pn": 1,
+            "pz": 200,
+            "po": 1,
+            "np": 1,
+            "fs": "m:90+s:4",
+            "fid": "f62",
+        }
+        live_headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://emdata.eastmoney.com/appdc/bkld/index.html",
+        }
+        live_payload = None
+        for live_host in [
+            "80.push2.eastmoney.com",
+            "81.push2.eastmoney.com",
+            "79.push2.eastmoney.com",
+            "82.push2.eastmoney.com",
+            "push2delay.eastmoney.com",
+            "push2.eastmoney.com",
+        ]:
+            try:
+                live_resp = requests.get(
+                    f"https://{live_host}/api/qt/clist/get",
+                    params=live_params,
+                    headers=live_headers,
+                    timeout=12,
+                )
+                live_resp.raise_for_status()
+                candidate = live_resp.json()
+                if (candidate.get("data") or {}).get("diff"):
+                    live_payload = candidate
+                    break
+            except Exception:
+                continue
+        if live_payload is None:
+            raise ValueError("实时行业行情接口暂不可用")
+        live_diff = ((live_payload.get("data") or {}).get("diff") or [])
+        live_rows = list(live_diff.values()) if isinstance(live_diff, dict) else live_diff
+        live_df = pd.DataFrame(live_rows).rename(columns={
+            "f12": "板块代码",
+            "f14": "行业板块",
+            "f62": "主力净流入(元)",
+            "f124": "行情时间戳",
+        })
+        if not live_df.empty and all(col in live_df.columns for col in ["板块代码", "行业板块", "主力净流入(元)"]):
+            live_df["主力净流入(元)"] = pd.to_numeric(live_df["主力净流入(元)"], errors="coerce")
+            live_df["行情时间戳"] = pd.to_numeric(live_df.get("行情时间戳"), errors="coerce")
+            live_df = live_df.dropna(subset=["行业板块", "主力净流入(元)"])
+            live_df = live_df.sort_values("主力净流入(元)", ascending=False).head(10).reset_index(drop=True)
+            quote_ts = live_df["行情时间戳"].dropna().max()
+            quote_date = (datetime.fromtimestamp(float(quote_ts), tz=BJT).strftime("%Y-%m-%d")
+                          if pd.notna(quote_ts) else now_bjt().strftime("%Y-%m-%d"))
+            if quote_date >= df["交易日期"].max():
+                live_df["交易日期"] = quote_date
+                live_df["排名"] = range(1, len(live_df) + 1)
+                live_df["主力净流入(亿元)"] = (live_df["主力净流入(元)"] / 1e8).round(2)
+                df = pd.concat(
+                    [df[df["交易日期"] != quote_date], live_df[required + ["主力净流入(亿元)"]]],
+                    ignore_index=True,
+                )
+                live_status = "历史报表 + 当日实时行情"
+    except Exception:
+        # 实时接口偶发限流时仍展示完整60日历史，并在页面标明当前使用的来源。
+        live_status = "历史报表（实时行情暂不可用）"
+
+    dates = sorted(df["交易日期"].unique(), reverse=True)[:60]
+    df = df[df["交易日期"].isin(dates)].copy()
+    df = df.sort_values(
+        ["交易日期", "主力净流入(亿元)", "排名"],
+        ascending=[False, False, True],
+    ).reset_index(drop=True)
+    return df, now_bjt().strftime("%Y-%m-%d %H:%M:%S"), live_status
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
@@ -1241,14 +1373,91 @@ def render_fund_flow(df, updated_at, is_open, prev_df=None, turnover="—", zt_t
     )
 
 
+def render_industry_rotation(df: pd.DataFrame, updated_at: str, source_status: str):
+    """展示按主力净流入排序的近60个交易日行业轮动。"""
+    if df is None or df.empty:
+        st.info("暂无行业轮动数据")
+        return
+
+    dates = sorted(df["交易日期"].unique(), reverse=True)
+    latest_date = dates[0]
+    latest = (df[df["交易日期"] == latest_date]
+              .sort_values(["主力净流入(亿元)", "排名"], ascending=[False, True])
+              .reset_index(drop=True))
+    top = latest.iloc[0]
+
+    st.subheader("行业轮动 · 主力净流入 TOP10")
+    st.caption(
+        f"数据源：东方财富 APP 板块轮动（{source_status}）　　覆盖 {len(dates)} 个交易日　　"
+        f"最近请求：{updated_at}　　每 {ROTATION_REFRESH_INTERVAL // 60} 分钟自动请求最新数据"
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("最新交易日", latest_date)
+    c2.metric("当日净流入第一", str(top["行业板块"]), f"{top['主力净流入(亿元)']:+.2f} 亿元")
+    c3.metric("TOP10 净流入合计", f"{latest['主力净流入(亿元)'].sum():+.2f} 亿元")
+    c4.metric("历史记录", f"{len(df)} 条")
+
+    colors = ["#ef5350" if value >= 0 else "#26a69a" for value in latest["主力净流入(亿元)"]]
+    fig = go.Figure(go.Bar(
+        x=latest["行业板块"],
+        y=latest["主力净流入(亿元)"],
+        marker_color=colors,
+        text=latest["主力净流入(亿元)"].map(lambda value: f"{value:+.2f}"),
+        textposition="outside",
+        customdata=latest[["排名", "板块代码"]],
+        hovertemplate=(
+            "<b>%{x}</b><br>排名：%{customdata[0]}<br>"
+            "主力净流入：%{y:.2f} 亿元<br>板块代码：%{customdata[1]}<extra></extra>"
+        ),
+    ))
+    fig.update_layout(
+        title=f"{latest_date} 主力净流入排名",
+        xaxis_tickangle=-35,
+        yaxis_title="主力净流入(亿元)",
+        height=460,
+        margin=dict(t=55, b=110),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    fig.add_hline(y=0, line_color="gray", line_width=1)
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("最近60个交易日轮动明细")
+    matrix_source = df.copy()
+    matrix_source["名次"] = matrix_source["排名"].map(lambda value: f"第{value}名")
+    matrix_source["板块 / 净流入"] = matrix_source.apply(
+        lambda row: f"{row['行业板块']}  {row['主力净流入(亿元)']:+.2f}亿", axis=1
+    )
+    matrix = matrix_source.pivot_table(
+        index="交易日期",
+        columns="名次",
+        values="板块 / 净流入",
+        aggfunc="first",
+    )
+    rank_columns = [f"第{rank}名" for rank in range(1, 11)]
+    matrix = matrix.reindex(index=dates, columns=rank_columns).reset_index()
+    matrix.columns.name = None
+    st.dataframe(matrix, use_container_width=True, hide_index=True, height=900)
+
+    with st.expander("查看全部600条排名记录"):
+        detail = df[["交易日期", "排名", "板块代码", "行业板块", "主力净流入(亿元)"]].copy()
+        st.dataframe(
+            detail.style.format({"主力净流入(亿元)": "{:+.2f}"}),
+            use_container_width=True,
+            hide_index=True,
+            height=700,
+        )
+
+
 @st.fragment(run_every=AUCTION_INTERVAL)
 def show_main_content():
     is_open    = is_market_open()
     is_auction = is_auction_time()
 
-    tab_industry, tab_concept, tab_ztdt, tab_lhb, tab_freq, tab_brent, tab_treasury = st.tabs([
+    tab_industry, tab_concept, tab_ztdt, tab_lhb, tab_freq, tab_brent, tab_treasury, tab_rotation = st.tabs([
         "📈 行业板块", "💡 概念板块", "🔴 涨停 / 跌停", "🐉 龙虎榜", "🏆 强势板块统计",
-        "🛢️ 布伦特原油", "🇺🇸 美债·通胀",
+        "🛢️ 布伦特原油", "🇺🇸 美债·通胀", "🔄 行业轮动",
     ])
 
     # ── 行业板块 Tab ──────────────────────────────────────────
@@ -1568,6 +1777,24 @@ def show_main_content():
     # ── 美债利率 Tab ──────────────────────────────────────────
     with tab_treasury:
         render_treasury_tab()
+
+    # ── 行业轮动 Tab ──────────────────────────────────────────
+    with tab_rotation:
+        try:
+            rotation_df, rotation_updated, rotation_source = fetch_industry_rotation()
+            st.session_state["industry_rotation_df"] = rotation_df
+            st.session_state["industry_rotation_updated"] = rotation_updated
+            st.session_state["industry_rotation_source"] = rotation_source
+        except Exception as rotation_err:
+            rotation_df = st.session_state.get("industry_rotation_df")
+            rotation_updated = st.session_state.get("industry_rotation_updated", "—")
+            rotation_source = st.session_state.get("industry_rotation_source", "上次缓存")
+            if rotation_df is None:
+                st.error(f"行业轮动数据获取失败：{rotation_err}")
+            else:
+                st.caption(f"⚠️ 最新数据请求失败（{rotation_err}），显示上次缓存")
+        if rotation_df is not None:
+            render_industry_rotation(rotation_df, rotation_updated, rotation_source)
 
     # ── 涨停 / 跌停 Tab ───────────────────────────────────────
     with tab_ztdt:
