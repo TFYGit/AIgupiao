@@ -1523,6 +1523,57 @@ def render_industry_rotation(df: pd.DataFrame, updated_at: str, source_status: s
             height=388,
         )
 
+    hot_dates = dates[:10]
+    hot_df = df[df["交易日期"].isin(hot_dates)]
+    hot_ranking = (
+        hot_df.groupby(["板块代码", "行业板块"], as_index=False)
+        .agg(
+            **{
+                "10日轮动次数": ("交易日期", "nunique"),
+                "期间最佳排名": ("排名", "min"),
+                "期间平均排名": ("排名", "mean"),
+                "TOP10净流入合计(亿元)": ("主力净流入(亿元)", "sum"),
+            }
+        )
+        .sort_values(
+            ["10日轮动次数", "期间平均排名", "TOP10净流入合计(亿元)"],
+            ascending=[False, True, False],
+        )
+        .head(10)
+        .reset_index(drop=True)
+    )
+    hot_ranking.insert(0, "热度排名", range(1, len(hot_ranking) + 1))
+    hot_ranking["10日入榜率"] = (hot_ranking["10日轮动次数"] / len(hot_dates) * 100).round(1)
+    leader = hot_ranking.iloc[0]
+
+    st.subheader("近10个交易日 · 轮动次数最多的板块")
+    st.caption("统计最近10个交易日所有进入过主力净流入TOP10的行业；次数相同时按平均排名、净流入合计排序。")
+    leader_c1, leader_c2, leader_c3 = st.columns(3)
+    leader_c1.metric("轮动最强板块", str(leader["行业板块"]))
+    leader_c2.metric("进入TOP10", f"{int(leader['10日轮动次数'])} 次")
+    leader_c3.metric("10日入榜率", f"{leader['10日入榜率']:.1f}%")
+    st.dataframe(
+        hot_ranking,
+        column_order=[
+            "热度排名", "行业板块", "板块代码", "10日轮动次数", "10日入榜率",
+            "期间最佳排名", "期间平均排名", "TOP10净流入合计(亿元)",
+        ],
+        column_config={
+            "10日轮动次数": st.column_config.ProgressColumn(
+                "10日轮动次数",
+                min_value=0,
+                max_value=len(hot_dates),
+                format="%d 次",
+            ),
+            "10日入榜率": st.column_config.NumberColumn(format="%.1f%%"),
+            "期间平均排名": st.column_config.NumberColumn(format="%.2f"),
+            "TOP10净流入合计(亿元)": st.column_config.NumberColumn(format="%+.2f"),
+        },
+        use_container_width=True,
+        hide_index=True,
+        height=388,
+    )
+
     render_rotation_stats(10)
     render_rotation_stats(60)
 
