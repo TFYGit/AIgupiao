@@ -1438,7 +1438,41 @@ def render_industry_rotation(df: pd.DataFrame, updated_at: str, source_status: s
     rank_columns = [f"第{rank}名" for rank in range(1, 11)]
     matrix = matrix.reindex(index=dates, columns=rank_columns).reset_index()
     matrix.columns.name = None
-    st.dataframe(matrix, use_container_width=True, hide_index=True, height=900)
+
+    board_frequency = (
+        df.groupby("行业板块")["交易日期"]
+        .nunique()
+        .sort_values(ascending=False)
+    )
+    no_highlight = "— 不高亮 —"
+    selected_board = st.selectbox(
+        "选择要高亮的行业板块",
+        options=[no_highlight, *board_frequency.index.tolist()],
+        key="rotation_highlight_board",
+        help="选中后，下方60个交易日明细里所有相同板块都会高亮显示。",
+    )
+    matrix_view = matrix
+    if selected_board != no_highlight:
+        highlight_prefix = f"{selected_board}  "
+
+        def highlight_board(value):
+            if isinstance(value, str) and value.startswith(highlight_prefix):
+                return (
+                    "background-color: #7a1f1f; color: #ffffff; font-weight: 700; "
+                    "border: 2px solid #ff4b4b;"
+                )
+            return ""
+
+        matrix_view = matrix.style
+        if hasattr(matrix_view, "map"):
+            matrix_view = matrix_view.map(highlight_board)
+        else:
+            matrix_view = matrix_view.applymap(highlight_board)
+        st.caption(
+            f"已高亮「{selected_board}」：最近{len(dates)}个交易日共进入TOP10 "
+            f"{int(board_frequency[selected_board])} 次。"
+        )
+    st.dataframe(matrix_view, use_container_width=True, hide_index=True, height=900)
 
     def render_rotation_stats(period: int):
         stats_dates = dates[:period]
