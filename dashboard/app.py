@@ -113,14 +113,15 @@ def load_lhb_history() -> pd.DataFrame:
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def load_zt_dt_history() -> pd.DataFrame:
-    """从 Supabase 加载近35天（含今天的35个自然日）涨停/跌停数"""
+    """从 Supabase 加载最近35个有数据的交易日涨停/跌停数"""
     try:
         sb = get_supabase()
-        start = (now_bjt().date() - timedelta(days=34)).strftime("%Y-%m-%d")
         rows = (sb.table("zt_dt_history")
                   .select("date,zt_count,dt_count")
-                  .gte("date", start)
-                  .order("date", desc=False)
+                  .lte("date", now_bjt().strftime("%Y-%m-%d"))
+                  .or_("zt_count.gt.0,dt_count.gt.0")
+                  .order("date", desc=True)
+                  .limit(35)
                   .execute().data)
         if not rows:
             return pd.DataFrame(columns=["date", "zt_count", "dt_count"])
@@ -1255,11 +1256,10 @@ def show_main_content():
 
 
 def show_zt_dt_trend(zt_today: int, dt_today: int):
-    """展示近35天（含今天的35个自然日）涨停/跌停家数趋势"""
+    """展示最近35个有数据的交易日，最新日期在左"""
     history = load_zt_dt_history()
     current_date = now_bjt().date()
     today = current_date.strftime("%Y-%m-%d")
-    start = (current_date - timedelta(days=34)).strftime("%Y-%m-%d")
 
     # 实时返回0时，优先用数据库已保存的今日数据（避免API失败显示为0）
     today_db = history[history["date"] == today]
@@ -1267,11 +1267,15 @@ def show_zt_dt_trend(zt_today: int, dt_today: int):
         zt_today = int(today_db["zt_count"].iloc[0])
         dt_today = int(today_db["dt_count"].iloc[0])
 
-    today_row = pd.DataFrame([{"date": today, "zt_count": zt_today, "dt_count": dt_today}])
-    df = pd.concat([history[history["date"] != today], today_row], ignore_index=True)
-    df = df[df["date"].between(start, today)]
-    df = df.sort_values("date").reset_index(drop=True)
+    df = history.copy()
+    if zt_today > 0 or dt_today > 0:
+        today_row = pd.DataFrame([{"date": today, "zt_count": zt_today, "dt_count": dt_today}])
+        df = pd.concat([history[history["date"] != today], today_row], ignore_index=True)
+    df = df[(df["date"] <= today) & ((df["zt_count"] > 0) | (df["dt_count"] > 0))]
+    df = (df.drop_duplicates("date", keep="last").sort_values("date", ascending=False)
+          .head(35).reset_index(drop=True))
     if df.empty:
+        st.info("暂无涨跌停历史数据")
         return
 
     df["date_label"] = df["date"].str[5:]   # 只显示 MM-DD
@@ -1297,15 +1301,17 @@ def show_zt_dt_trend(zt_today: int, dt_today: int):
     fig.add_trace(go.Scatter(
         x=zt_positions, y=df["zt_count"], name="涨停趋势",
         mode="lines+markers",
-        line=dict(color="#ff9800", width=2.5),
+        line=dict(color="#ff9800", width=2.5, shape="spline", smoothing=0.8),
+        connectgaps=True,
         marker=dict(size=6),
         customdata=df["date"],
         hovertemplate="%{customdata}<br>涨停家数：%{y}<extra>涨停趋势</extra>",
     ))
     fig.update_layout(
-        title="近35天涨停 / 跌停家数",
+        title="近35个交易日涨停 / 跌停家数",
         barmode="overlay",
-        xaxis=dict(tickmode="array", tickvals=positions, ticktext=df["date_label"]),
+        xaxis=dict(tickmode="array", tickvals=positions, ticktext=df["date_label"],
+                   tickangle=-45, range=[-0.6, len(df) - 0.4]),
         height=360,
         margin=dict(t=50, b=40),
         plot_bgcolor="rgba(0,0,0,0)",
@@ -1313,8 +1319,11 @@ def show_zt_dt_trend(zt_today: int, dt_today: int):
         legend=dict(orientation="h", y=1.08),
     )
     st.divider()
-    st.subheader("近35天涨停 / 跌停统计")
-    st.caption("统计范围为含今天的最近35个自然日，展示已采集的数据。")
+    st.subheader("近35个交易日涨停 / 跌停统计")
+    st.caption(
+        f"展示最近{len(df)}个有数据的交易日（最多35个），最新日期在左；"
+        "无数据日期不显示，平滑曲线连接每天的涨停柱顶。"
+    )
     st.plotly_chart(fig, use_container_width=True)
 
     table = df[["date", "zt_count", "dt_count"]].rename(
