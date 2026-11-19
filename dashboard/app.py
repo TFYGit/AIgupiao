@@ -113,10 +113,10 @@ def load_lhb_history() -> pd.DataFrame:
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def load_zt_dt_history() -> pd.DataFrame:
-    """从 Supabase 加载近1个月（含今天的30个自然日）涨停/跌停数"""
+    """从 Supabase 加载近35天（含今天的35个自然日）涨停/跌停数"""
     try:
         sb = get_supabase()
-        start = (now_bjt().date() - timedelta(days=29)).strftime("%Y-%m-%d")
+        start = (now_bjt().date() - timedelta(days=34)).strftime("%Y-%m-%d")
         rows = (sb.table("zt_dt_history")
                   .select("date,zt_count,dt_count")
                   .gte("date", start)
@@ -1255,11 +1255,11 @@ def show_main_content():
 
 
 def show_zt_dt_trend(zt_today: int, dt_today: int):
-    """展示近1个月（含今天的30个自然日）涨停/跌停家数趋势"""
+    """展示近35天（含今天的35个自然日）涨停/跌停家数趋势"""
     history = load_zt_dt_history()
     current_date = now_bjt().date()
     today = current_date.strftime("%Y-%m-%d")
-    start = (current_date - timedelta(days=29)).strftime("%Y-%m-%d")
+    start = (current_date - timedelta(days=34)).strftime("%Y-%m-%d")
 
     # 实时返回0时，优先用数据库已保存的今日数据（避免API失败显示为0）
     today_db = history[history["date"] == today]
@@ -1288,7 +1288,7 @@ def show_zt_dt_trend(zt_today: int, dt_today: int):
         text=df["dt_count"], textposition="outside",
     ))
     fig.update_layout(
-        title="近1个月涨停 / 跌停家数",
+        title="近35天涨停 / 跌停家数",
         barmode="group",
         xaxis_type="category",
         height=360,
@@ -1298,8 +1298,8 @@ def show_zt_dt_trend(zt_today: int, dt_today: int):
         legend=dict(orientation="h", y=1.08),
     )
     st.divider()
-    st.subheader("近1个月涨停 / 跌停统计")
-    st.caption("统计范围为含今天的最近30个自然日，展示已采集的数据。")
+    st.subheader("近35天涨停 / 跌停统计")
+    st.caption("统计范围为含今天的最近35个自然日，展示已采集的数据。")
     st.plotly_chart(fig, use_container_width=True)
 
     table = df[["date", "zt_count", "dt_count"]].rename(
