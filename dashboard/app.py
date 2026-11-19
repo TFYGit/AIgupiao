@@ -1298,8 +1298,9 @@ def show_zt_dt_trend(zt_today: int, dt_today: int):
         marker_color="#26a69a",
         text=df["dt_count"], textposition="outside",
     ))
-    fig.add_trace(go.Scatter(
-        x=zt_positions, y=df["zt_count"], name="涨停趋势",
+    trend_fig = go.Figure()
+    trend_fig.add_trace(go.Scatter(
+        x=positions, y=df["zt_count"], name="涨停趋势",
         mode="lines+markers",
         line=dict(color="#ff9800", width=2.5, shape="spline", smoothing=0.8),
         connectgaps=True,
@@ -1307,24 +1308,27 @@ def show_zt_dt_trend(zt_today: int, dt_today: int):
         customdata=df["date"],
         hovertemplate="%{customdata}<br>涨停家数：%{y}<extra>涨停趋势</extra>",
     ))
-    fig.update_layout(
-        title="近35个交易日涨停 / 跌停家数",
-        barmode="overlay",
+    # 两张图固定相同的横轴、左右边距，让每个日期上下对齐。
+    shared_layout = dict(
         xaxis=dict(tickmode="array", tickvals=positions, ticktext=df["date_label"],
                    tickangle=-45, range=[-0.6, len(df) - 0.4]),
+        yaxis=dict(automargin=False),
         height=360,
-        margin=dict(t=50, b=40),
+        margin=dict(l=60, r=30, t=60, b=60, autoexpand=False),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
         legend=dict(orientation="h", y=1.08),
     )
+    fig.update_layout(**shared_layout, title="近35个交易日涨停 / 跌停家数", barmode="overlay")
+    trend_fig.update_layout(**shared_layout, title="近35个交易日涨停趋势", showlegend=False)
     st.divider()
     st.subheader("近35个交易日涨停 / 跌停统计")
     st.caption(
         f"展示最近{len(df)}个有数据的交易日（最多35个），最新日期在左；"
-        "无数据日期不显示，平滑曲线连接每天的涨停柱顶。"
+        "无数据日期不显示，下方曲线与柱形图日期一一对应。"
     )
     st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(trend_fig, use_container_width=True)
 
     table = df[["date", "zt_count", "dt_count"]].rename(
         columns={"date": "日期", "zt_count": "涨停家数", "dt_count": "跌停家数"}
