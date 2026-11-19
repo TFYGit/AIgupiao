@@ -1270,27 +1270,42 @@ def show_zt_dt_trend(zt_today: int, dt_today: int):
     today_row = pd.DataFrame([{"date": today, "zt_count": zt_today, "dt_count": dt_today}])
     df = pd.concat([history[history["date"] != today], today_row], ignore_index=True)
     df = df[df["date"].between(start, today)]
-    df = df.sort_values("date", ascending=False).reset_index(drop=True)
+    df = df.sort_values("date").reset_index(drop=True)
     if df.empty:
         return
 
     df["date_label"] = df["date"].str[5:]   # 只显示 MM-DD
+    positions = list(range(len(df)))
+    zt_positions = [x - 0.2 for x in positions]
+    dt_positions = [x + 0.2 for x in positions]
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        x=df["date_label"], y=df["zt_count"], name="涨停家数",
+        x=zt_positions, y=df["zt_count"], name="涨停家数", width=0.36,
+        customdata=df["date"],
+        hovertemplate="%{customdata}<br>涨停家数：%{y}<extra></extra>",
         marker_color="#ef5350",
         text=df["zt_count"], textposition="outside",
     ))
     fig.add_trace(go.Bar(
-        x=df["date_label"], y=df["dt_count"], name="跌停家数",
+        x=dt_positions, y=df["dt_count"], name="跌停家数", width=0.36,
+        customdata=df["date"],
+        hovertemplate="%{customdata}<br>跌停家数：%{y}<extra></extra>",
         marker_color="#26a69a",
         text=df["dt_count"], textposition="outside",
     ))
+    fig.add_trace(go.Scatter(
+        x=zt_positions, y=df["zt_count"], name="涨停趋势",
+        mode="lines+markers",
+        line=dict(color="#ff9800", width=2.5),
+        marker=dict(size=6),
+        customdata=df["date"],
+        hovertemplate="%{customdata}<br>涨停家数：%{y}<extra>涨停趋势</extra>",
+    ))
     fig.update_layout(
         title="近35天涨停 / 跌停家数",
-        barmode="group",
-        xaxis_type="category",
+        barmode="overlay",
+        xaxis=dict(tickmode="array", tickvals=positions, ticktext=df["date_label"]),
         height=360,
         margin=dict(t=50, b=40),
         plot_bgcolor="rgba(0,0,0,0)",
