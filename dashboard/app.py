@@ -1294,6 +1294,28 @@ def fetch_market_turnover(start_date: str, end_date: str) -> pd.DataFrame:
     return result.sort_values("date", ascending=False).reset_index(drop=True)
 
 
+@st.cache_data(ttl=REFRESH_INTERVAL)
+def fetch_sh_index_history(start_date: str, end_date: str) -> pd.DataFrame:
+    """获取东方财富上证指数日线收盘点位，盘中当天为最新点位。"""
+    resp = requests.get(
+        "https://push2his.eastmoney.com/api/qt/stock/kline/get",
+        params={
+            "secid": "1.000001", "klt": "101", "fqt": "0",
+            "beg": start_date.replace("-", ""), "end": end_date.replace("-", ""),
+            "fields1": "f1,f2,f3,f4,f5,f6",
+            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+        },
+        headers=_EM_HEADERS, timeout=15,
+    )
+    resp.raise_for_status()
+    klines = (resp.json().get("data") or {}).get("klines") or []
+    rows = [line.split(",") for line in klines]
+    result = pd.DataFrame({"date": [r[0] for r in rows], "指数点位": [r[2] for r in rows]})
+    result["指数点位"] = pd.to_numeric(result["指数点位"], errors="coerce")
+    result = result.dropna().drop_duplicates("date")
+    return result[(result["指数点位"] > 0) & result["date"].between(start_date, end_date)]
+
+
 TURNOVER_DB_COLUMNS = {
     "date": "date", "沪市成交额": "sh_amount", "深市成交额": "sz_amount",
     "京市成交额": "bj_amount",
@@ -1426,7 +1448,7 @@ def show_zt_dt_trend(zt_today: int, dt_today: int):
         customdata=df["date"],
         hovertemplate="%{customdata}<br>涨停家数：%{y}<extra>涨停趋势</extra>",
     ))
-    # 两张图固定相同的横轴、左右边距，让每个日期上下对齐。
+    # 各图固定相同的横轴、左右边距，让每个日期上下对齐。
     shared_layout = dict(
         xaxis=dict(tickmode="array", tickvals=positions, ticktext=df["date_label"],
                    tickangle=-45, range=[-0.6, len(df) - 0.4]),
@@ -1470,10 +1492,26 @@ def show_zt_dt_trend(zt_today: int, dt_today: int):
     except Exception as e:
         st.warning(f"沪深京成交额暂时获取失败：{str(e)[:120]}")
 
-    table = df[["date", "zt_count", "dt_count"]].rename(
-        columns={"date": "日期", "zt_count": "涨停家数", "dt_count": "跌停家数"}
-    ).set_index("日期").T
-    st.dataframe(table, use_container_width=True)
+    st.subheader("上证指数 · 近35个交易日")
+    st.caption("东方财富上证指数（000001）每日收盘点位，盘中当天为最新点位；日期与上方图表一致，最新日期在左。")
+    try:
+        index_history = fetch_sh_index_history(df["date"].min(), today)
+        index_aligned = df[["date"]].merge(index_history, on="date", how="left")
+        if index_aligned["指数点位"].notna().any():
+            index_fig = go.Figure(go.Scatter(
+                x=positions, y=index_aligned["指数点位"], name="上证指数",
+                mode="lines+markers",
+                line=dict(color="#ef5350", width=2.5, shape="spline", smoothing=0.8),
+                marker=dict(size=5), connectgaps=False,
+                customdata=index_aligned["date"],
+                hovertemplate="%{customdata}<br>上证指数：%{y:,.2f} 点<extra></extra>",
+            ))
+            index_fig.update_layout(**shared_layout, title="上证指数（点）", showlegend=False)
+            st.plotly_chart(index_fig, use_container_width=True)
+        else:
+            st.info("对应日期暂无上证指数数据")
+    except Exception as e:
+        st.warning(f"上证指数暂时获取失败：{str(e)[:120]}")
 
 
 
