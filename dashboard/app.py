@@ -1255,6 +1255,45 @@ def show_main_content():
 
 
 
+@st.cache_data(ttl=REFRESH_INTERVAL)
+def fetch_market_turnover(start_date: str, end_date: str) -> pd.DataFrame:
+    """汇总东方财富沪、深、京行情成交额；三地同日数据齐全才返回。"""
+    frames = []
+    for secid, column in [
+        ("1.000001", "沪市成交额"),
+        ("0.399001", "深市成交额"),
+        ("0.899050", "京市成交额"),
+    ]:
+        resp = requests.get(
+            "https://push2his.eastmoney.com/api/qt/stock/kline/get",
+            params={
+                "secid": secid, "klt": "101", "fqt": "0",
+                "beg": start_date.replace("-", ""),
+                "end": end_date.replace("-", ""),
+                "fields1": "f1,f2,f3,f4,f5,f6",
+                "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+            },
+            headers=_EM_HEADERS, timeout=15,
+        )
+        resp.raise_for_status()
+        klines = (resp.json().get("data") or {}).get("klines") or []
+        if not klines:
+            raise ValueError(f"{column}日线数据为空")
+        rows = [line.split(",") for line in klines]
+        frame = pd.DataFrame({"date": [r[0] for r in rows], column: [r[6] for r in rows]})
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+        frame = frame.dropna().drop_duplicates("date")
+        frames.append(frame[frame[column] > 0])
+    # 使用行情接口的成交额字段，不按指数成分股自行求和。
+    # 三地数据齐全才计算总额，避免漏掉某市场导致总额偏小。
+    result = frames[0].merge(frames[1], on="date", how="inner")
+    result = result.merge(frames[2], on="date", how="inner")
+    result["成交额(亿元)"] = (
+        result["沪市成交额"] + result["深市成交额"] + result["京市成交额"]
+    ) / 1e8
+    return result.sort_values("date", ascending=False).reset_index(drop=True)
+
+
 def show_zt_dt_trend(zt_today: int, dt_today: int):
     """展示最近35个有数据的交易日，最新日期在左"""
     history = load_zt_dt_history()
@@ -1329,6 +1368,28 @@ def show_zt_dt_trend(zt_today: int, dt_today: int):
     )
     st.plotly_chart(fig, use_container_width=True)
     st.plotly_chart(trend_fig, use_container_width=True)
+
+    st.subheader("沪深京每日成交额")
+    st.caption("汇总东方财富沪市、深市、北交所行情成交额，单位为亿元；盘中为累计值。日期与上方图表对齐，缺失数据留空。")
+    try:
+        turnover = fetch_market_turnover(df["date"].min(), today)
+        aligned = df[["date"]].merge(turnover, on="date", how="left")
+        if aligned["成交额(亿元)"].notna().any():
+            amount_fig = go.Figure(go.Bar(
+                x=positions, y=aligned["成交额(亿元)"], name="沪深京成交额",
+                marker_color="#42a5f5", width=0.6,
+                customdata=aligned["date"],
+                hovertemplate="%{customdata}<br>沪深京成交额：%{y:,.2f} 亿元<extra></extra>",
+            ))
+            amount_fig.update_layout(**shared_layout, title="沪深京成交额（亿元）", showlegend=False)
+            st.plotly_chart(amount_fig, use_container_width=True)
+            missing = int(aligned["成交额(亿元)"].isna().sum())
+            if missing:
+                st.caption(f"其中{missing}个日期暂未取得完整的沪深京成交额，图中留空。")
+        else:
+            st.info("对应日期暂无完整的沪深京成交额数据")
+    except Exception as e:
+        st.warning(f"沪深京成交额暂时获取失败：{str(e)[:120]}")
 
     table = df[["date", "zt_count", "dt_count"]].rename(
         columns={"date": "日期", "zt_count": "涨停家数", "dt_count": "跌停家数"}
