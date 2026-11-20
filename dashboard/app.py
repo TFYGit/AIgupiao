@@ -187,7 +187,7 @@ def fetch_zt_total(date_str: str) -> int:
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
 def fetch_dt_pool(date_str: str) -> "pd.DataFrame":
-    """获取今日跌停池完整数据，供 fetch_dt_count / fetch_dt_sector 复用"""
+    """获取今日跌停池完整数据，供 fetch_dt_count 统计"""
     import threading
     result, error = [None], [None]
     def _run():
@@ -206,14 +206,6 @@ def fetch_dt_pool(date_str: str) -> "pd.DataFrame":
 def fetch_dt_count(date_str: str) -> int:
     """今日跌停总家数"""
     return len(fetch_dt_pool(date_str))
-
-
-def fetch_dt_sector(date_str: str) -> dict:
-    """今日各行业跌停家数，返回 {行业: 跌停数}"""
-    df = fetch_dt_pool(date_str)
-    if df.empty or "所属行业" not in df.columns:
-        return {}
-    return df["所属行业"].value_counts().to_dict()
 
 
 def _lhb_fetch_one_day(date_str: str) -> tuple:
@@ -1230,29 +1222,6 @@ def show_main_content():
             save_zt_dt_history(zt_total, dt_total)
             st.session_state["last_saved_zt_dt"] = zt_dt_snapshot
         show_zt_dt_trend(zt_total, dt_total)
-
-        # 板块明细
-        zt_map = fetch_zt_count(_today)
-        dt_map = fetch_dt_sector(_today)
-        all_sectors = sorted(set(zt_map) | set(dt_map))
-        if all_sectors:
-            sector_rows = []
-            for s in all_sectors:
-                zt_n = zt_map.get(s, 0)
-                dt_n = dt_map.get(s, 0)
-                sector_rows.append({"板块": s, "涨停": zt_n, "跌停": dt_n})
-            sector_df = (pd.DataFrame(sector_rows)
-                           .sort_values(["涨停", "跌停"], ascending=[False, False])
-                           .reset_index(drop=True))
-            sector_df.index += 1
-            st.divider()
-            st.subheader("今日涨停 / 跌停板块分布（行业）")
-            st.dataframe(
-                sector_df,
-                use_container_width=True,
-                height=min(40 * len(sector_df) + 40, 500),
-            )
-
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
