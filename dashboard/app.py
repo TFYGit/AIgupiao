@@ -1350,13 +1350,18 @@ def save_market_turnover_history(df: pd.DataFrame) -> bool:
 
 
 def get_market_turnover(start_date: str, end_date: str) -> pd.DataFrame:
-    """合并数据库历史和最新行情，源站故障时保留已存数据。"""
+    """历史只读数据库，仅请求并保存北京时间当天的行情。"""
     stored = load_market_turnover_history(start_date, end_date)
-    try:
-        fresh = fetch_market_turnover(start_date, end_date)
-    except Exception as e:
-        st.caption(f"成交额接口暂时不可用，显示数据库已保存的数据：{str(e)[:100]}")
-        fresh = pd.DataFrame()
+    today = now_bjt().strftime("%Y-%m-%d")
+    fresh = pd.DataFrame()
+    if start_date <= today <= end_date:
+        try:
+            fresh = fetch_market_turnover(today, today)
+            # 防止上游在休市等情况下返回其他日期，覆盖数据库历史。
+            if not fresh.empty:
+                fresh = fresh[fresh["date"] == today].copy()
+        except Exception as e:
+            st.caption(f"成交额接口暂时不可用，显示数据库已保存的数据：{str(e)[:100]}")
     if not fresh.empty:
         save_market_turnover_history(fresh)
         stored = pd.concat([stored, fresh], ignore_index=True)
@@ -1444,7 +1449,7 @@ def show_zt_dt_trend(zt_today: int, dt_today: int):
     st.plotly_chart(trend_fig, use_container_width=True)
 
     st.subheader("沪深京每日成交额")
-    st.caption("汇总东方财富沪市、深市、北交所行情成交额，单位为亿元；盘中为累计值。日期与上方图表对齐，缺失数据留空。")
+    st.caption("历史成交额读取数据库，当天通过东方财富接口获取并入库，单位为亿元；盘中为累计值。日期与上方图表对齐，缺失数据留空。")
     try:
         turnover = get_market_turnover(df["date"].min(), today)
         aligned = df[["date"]].merge(turnover, on="date", how="left")
