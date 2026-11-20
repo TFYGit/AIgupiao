@@ -53,3 +53,15 @@ python run.py
 # 不发邮件，只生成 Excel
 python run.py --no-email
 ```
+
+## 看板成交额入库
+
+在 Supabase 的 SQL Editor 执行 `sql/market_turnover_history.sql`，创建成交额历史表。
+Streamlit 服务端 Secrets 中的 `SUPABASE_URL` 指向该项目，`SUPABASE_KEY` 使用
+该项目的服务端 `service_role` 密钥（仅在服务端 Secrets 配置，不提交到代码仓库）。
+
+访问涨跌停页时，系统将图表日期范围内的东方财富沪深京历史成交额按日期写入
+`market_turnover_history`，保存沪、深、京分项、自动计算的总额（均为元）及更新时间。
+同一天按最新累计值更新，不重复插入；接口失败时回退到数据库记录。
+盘中记录是累计快照，收盘后访问页面会更新为接口提供的收盘数据。
+采集由页面访问触发，没有访问时不会自动补采。

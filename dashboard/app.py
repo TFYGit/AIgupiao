@@ -1294,6 +1294,80 @@ def fetch_market_turnover(start_date: str, end_date: str) -> pd.DataFrame:
     return result.sort_values("date", ascending=False).reset_index(drop=True)
 
 
+TURNOVER_DB_COLUMNS = {
+    "date": "date", "沪市成交额": "sh_amount", "深市成交额": "sz_amount",
+    "京市成交额": "bj_amount",
+}
+
+
+def load_market_turnover_history(start_date: str, end_date: str) -> pd.DataFrame:
+    """读取持久化的成交额；数据库金额单位为元。"""
+    empty = pd.DataFrame(columns=[*TURNOVER_DB_COLUMNS, "成交额(亿元)"])
+    try:
+        rows = (get_supabase().table("market_turnover_history")
+                .select("date,sh_amount,sz_amount,bj_amount")
+                .gte("date", start_date).lte("date", end_date)
+                .order("date", desc=True).execute().data)
+        if not rows:
+            return empty
+        result = pd.DataFrame(rows).rename(columns={v: k for k, v in TURNOVER_DB_COLUMNS.items()})
+        amounts = ["沪市成交额", "深市成交额", "京市成交额"]
+        for col in amounts:
+            result[col] = pd.to_numeric(result[col], errors="coerce")
+        result = result.dropna(subset=["date", *amounts])
+        result = result[(result[amounts] > 0).all(axis=1)]
+        result["成交额(亿元)"] = result[amounts].sum(axis=1) / 1e8
+        return result
+    except Exception as e:
+        st.session_state["_turnover_db_err"] = str(e)[:200]
+        return empty
+
+
+def save_market_turnover_history(df: pd.DataFrame) -> bool:
+    """按日期更新成交额，盘中快照随刷新更新；失败时允许下次重试。"""
+    try:
+        clean = df[list(TURNOVER_DB_COLUMNS)].copy()
+        for col in list(TURNOVER_DB_COLUMNS)[1:]:
+            clean[col] = pd.to_numeric(clean[col], errors="coerce")
+        clean = clean.dropna()
+        clean = clean[(clean[list(TURNOVER_DB_COLUMNS)[1:]] > 0).all(axis=1)]
+        if clean.empty:
+            return False
+        rows = clean.rename(columns=TURNOVER_DB_COLUMNS).to_dict("records")
+        snapshot = tuple((r["date"], r["sh_amount"], r["sz_amount"], r["bj_amount"]) for r in rows)
+        if st.session_state.get("_saved_turnover_snapshot") == snapshot:
+            return True
+        updated_at = datetime.now(timezone.utc).isoformat()
+        for row in rows:
+            row["updated_at"] = updated_at
+        get_supabase().table("market_turnover_history").upsert(rows, on_conflict="date").execute()
+        st.session_state["_saved_turnover_snapshot"] = snapshot
+        st.session_state.pop("_turnover_db_err", None)
+        return True
+    except Exception as e:
+        st.session_state["_turnover_db_err"] = str(e)[:200]
+        return False
+
+
+def get_market_turnover(start_date: str, end_date: str) -> pd.DataFrame:
+    """合并数据库历史和最新行情，源站故障时保留已存数据。"""
+    stored = load_market_turnover_history(start_date, end_date)
+    try:
+        fresh = fetch_market_turnover(start_date, end_date)
+    except Exception as e:
+        st.caption(f"成交额接口暂时不可用，显示数据库已保存的数据：{str(e)[:100]}")
+        fresh = pd.DataFrame()
+    if not fresh.empty:
+        save_market_turnover_history(fresh)
+        stored = pd.concat([stored, fresh], ignore_index=True)
+    if st.session_state.get("_turnover_db_err"):
+        st.warning("成交额数据库读写失败，请确认已执行 sql/market_turnover_history.sql，且 Supabase 配置具有写入权限。")
+    if stored.empty:
+        return stored
+    return (stored.drop_duplicates("date", keep="last")
+            .sort_values("date", ascending=False).reset_index(drop=True))
+
+
 def show_zt_dt_trend(zt_today: int, dt_today: int):
     """展示最近35个有数据的交易日，最新日期在左"""
     history = load_zt_dt_history()
@@ -1372,7 +1446,7 @@ def show_zt_dt_trend(zt_today: int, dt_today: int):
     st.subheader("沪深京每日成交额")
     st.caption("汇总东方财富沪市、深市、北交所行情成交额，单位为亿元；盘中为累计值。日期与上方图表对齐，缺失数据留空。")
     try:
-        turnover = fetch_market_turnover(df["date"].min(), today)
+        turnover = get_market_turnover(df["date"].min(), today)
         aligned = df[["date"]].merge(turnover, on="date", how="left")
         if aligned["成交额(亿元)"].notna().any():
             amount_fig = go.Figure(go.Bar(
