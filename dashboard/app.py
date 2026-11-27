@@ -131,17 +131,31 @@ def load_zt_dt_history() -> pd.DataFrame:
         return pd.DataFrame(columns=["date", "zt_count", "dt_count"])
 
 
-def save_zt_dt_history(zt_count: int, dt_count: int):
-    """把今日涨停/跌停数 upsert 到 Supabase"""
+def save_zt_dt_history(zt_count: int | None, dt_count: int | None) -> tuple:
+    """只保存有效字段；失败或异常归零时保留数据库原值，并返回显示值。"""
     today = now_bjt().strftime("%Y-%m-%d")
+    display = [zt_count or 0, dt_count or 0]
     try:
         sb = get_supabase()
-        sb.table("zt_dt_history").upsert(
-            {"date": today, "zt_count": zt_count, "dt_count": dt_count},
-            on_conflict="date"
-        ).execute()
+        rows = (sb.table("zt_dt_history").select("zt_count,dt_count")
+                .eq("date", today).limit(1).execute().data)
+        previous = rows[0] if rows else {}
+        payload = {}
+        for i, (column, value) in enumerate([("zt_count", zt_count), ("dt_count", dt_count)]):
+            old = previous.get(column)
+            if value is None or (value == 0 and old is not None and old > 0):
+                display[i] = old if old is not None else 0
+                continue
+            payload[column] = value
+        if previous and payload:
+            # 单侧失败时只更新另一侧，不能把失败字段作为0写入。
+            sb.table("zt_dt_history").update(payload).eq("date", today).execute()
+        elif not previous and len(payload) == 2 and any(payload.values()):
+            sb.table("zt_dt_history").upsert({"date": today, **payload}, on_conflict="date").execute()
+        st.session_state.pop("_save_zt_dt_err", None)
     except Exception as e:
         st.session_state["_save_zt_dt_err"] = str(e)[:200]
+    return tuple(display)
 
 
 def is_market_open() -> bool:
@@ -158,7 +172,7 @@ _EM_HEADERS = {
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
-def fetch_zt_count(date_str: str) -> dict:
+def fetch_zt_count(date_str: str) -> dict | None:
     """用akshare涨停池统计各行业涨停家数"""
     import threading
     result, error = [None], [None]
@@ -171,18 +185,18 @@ def fetch_zt_count(date_str: str) -> dict:
     t.start()
     t.join(15)
     if t.is_alive() or error[0] or result[0] is None or result[0].empty:
-        return {}
+        return None
     df = result[0]
     if "所属行业" not in df.columns:
-        return {}
+        return None
     return df["所属行业"].value_counts().to_dict()
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
-def fetch_zt_total(date_str: str) -> int:
+def fetch_zt_total(date_str: str) -> int | None:
     """复用已缓存的fetch_zt_count，避免重复调API"""
     zt_map = fetch_zt_count(date_str)
-    return sum(zt_map.values()) if zt_map else 0
+    return sum(zt_map.values()) if zt_map is not None else None
 
 
 @st.cache_data(ttl=REFRESH_INTERVAL)
@@ -198,14 +212,15 @@ def fetch_dt_pool(date_str: str) -> "pd.DataFrame":
     t = threading.Thread(target=_run, daemon=True)
     t.start()
     t.join(15)
-    if t.is_alive() or error[0] or result[0] is None or result[0].empty:
-        return pd.DataFrame()
+    if t.is_alive() or error[0] or result[0] is None:
+        return None
     return result[0]
 
 
-def fetch_dt_count(date_str: str) -> int:
+def fetch_dt_count(date_str: str) -> int | None:
     """今日跌停总家数"""
-    return len(fetch_dt_pool(date_str))
+    pool = fetch_dt_pool(date_str)
+    return len(pool) if pool is not None else None
 
 
 def _lhb_fetch_one_day(date_str: str) -> tuple:
@@ -1209,13 +1224,13 @@ def show_main_content():
         _today = now_bjt().strftime("%Y%m%d")
         zt_total = fetch_zt_total(_today)
         dt_total = fetch_dt_count(_today)
+        unavailable = zt_total is None or dt_total is None
+        zt_total, dt_total = save_zt_dt_history(zt_total, dt_total)
         c1, c2 = st.columns(2)
         c1.metric("今日涨停", f"{zt_total} 只")
         c2.metric("今日跌停", f"{dt_total} 只")
-        if zt_total == 0 and is_market_open():
+        if unavailable and is_market_open():
             st.warning("涨停池接口暂时无法获取数据，图表已回退到数据库历史值")
-        if zt_total > 0 or dt_total > 0:
-            save_zt_dt_history(zt_total, dt_total)
         show_zt_dt_trend(zt_total, dt_total)
 
 
