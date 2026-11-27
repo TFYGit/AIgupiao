@@ -1043,11 +1043,8 @@ def show_main_content():
                 if lhb_fallback_date:
                     st.caption(f"⚠️ 今日实时数据暂不可用，显示最近一期数据（{lhb_fallback_date}）")
                 try:
-                    # 今日数据存库（仅非回退状态时，每日只存一次）
-                    today_str = now_bjt().strftime("%Y-%m-%d")
-                    if not lhb_fallback_date and st.session_state.get("lhb_saved_date") != today_str:
-                        save_lhb_history(lhb_df)
-                        st.session_state["lhb_saved_date"] = today_str
+                    # 每次刷新均存库，回退数据仍按实际上榜日期更新。
+                    save_lhb_history(lhb_df)
 
                     # 区分单日行（金额可信）和连续/累计行（金额是多日累计，不可信）
                     is_cumul = lhb_df["上榜原因"].str.contains("连续|累计", na=False) if "上榜原因" in lhb_df.columns else pd.Series(False, index=lhb_df.index)
@@ -1217,10 +1214,8 @@ def show_main_content():
         c2.metric("今日跌停", f"{dt_total} 只")
         if zt_total == 0 and is_market_open():
             st.warning("涨停池接口暂时无法获取数据，图表已回退到数据库历史值")
-        zt_dt_snapshot = (_today, zt_total, dt_total)
-        if (zt_total > 0 or dt_total > 0) and st.session_state.get("last_saved_zt_dt") != zt_dt_snapshot:
+        if zt_total > 0 or dt_total > 0:
             save_zt_dt_history(zt_total, dt_total)
-            st.session_state["last_saved_zt_dt"] = zt_dt_snapshot
         show_zt_dt_trend(zt_total, dt_total)
 
 
@@ -1315,7 +1310,7 @@ def load_market_turnover_history(start_date: str, end_date: str) -> pd.DataFrame
 
 
 def save_market_turnover_history(df: pd.DataFrame) -> bool:
-    """按日期更新成交额，盘中快照随刷新更新；失败时允许下次重试。"""
+    """每次刷新均按日期更新成交额；失败时允许下次重试。"""
     try:
         clean = df[list(TURNOVER_DB_COLUMNS)].copy()
         for col in list(TURNOVER_DB_COLUMNS)[1:]:
@@ -1325,14 +1320,10 @@ def save_market_turnover_history(df: pd.DataFrame) -> bool:
         if clean.empty:
             return False
         rows = clean.rename(columns=TURNOVER_DB_COLUMNS).to_dict("records")
-        snapshot = tuple((r["date"], r["sh_amount"], r["sz_amount"], r["bj_amount"]) for r in rows)
-        if st.session_state.get("_saved_turnover_snapshot") == snapshot:
-            return True
         updated_at = datetime.now(timezone.utc).isoformat()
         for row in rows:
             row["updated_at"] = updated_at
         get_supabase().table("market_turnover_history").upsert(rows, on_conflict="date").execute()
-        st.session_state["_saved_turnover_snapshot"] = snapshot
         st.session_state.pop("_turnover_db_err", None)
         return True
     except Exception as e:
